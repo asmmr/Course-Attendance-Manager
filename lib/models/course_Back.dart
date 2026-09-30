@@ -4,7 +4,6 @@ class Course {
   final String name;
   final String semester;
   final String section;
-  final DateTime createdAt;
 
   Course({
     this.id,
@@ -12,8 +11,7 @@ class Course {
     required this.name,
     required this.semester,
     required this.section,
-    DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+  });
 
   Map<String, dynamic> toMap() {
     return {
@@ -22,7 +20,6 @@ class Course {
       'name': name,
       'semester': semester,
       'section': section,
-      'created_at': createdAt.toIso8601String(),
     };
   }
 
@@ -33,8 +30,6 @@ class Course {
       name: map['name']?.toString() ?? '',
       semester: map['semester']?.toString() ?? '',
       section: map['section']?.toString() ?? '',
-      createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
     );
   }
 }

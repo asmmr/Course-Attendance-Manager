@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'dart:io';
@@ -15,81 +13,158 @@ import 'package:pdf/widgets.dart' as pw;
 
 
 import 'package:file_picker/file_picker.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'database/database_helper.dart';
 import 'models/course.dart';
-import 'services/google_drive_sync_service.dart';
 
+void main() {
+  //WidgetsFlutterBinding.ensureInitialized();
 
+  runApp(const CourseAttendanceManager());
+}
 
-Future<void> syncCourseInBackground(Course course) async {
-  final drive = GoogleDriveSyncService.instance;
-  if (!drive.isConnected || course.id == null) return;
+class CourseAttendanceManager extends StatelessWidget {
+  const CourseAttendanceManager({super.key});
 
-  try {
-    final students = await DatabaseHelper.instance.getStudents(course.id!);
-    final attendance = await DatabaseHelper.instance.getAttendance(course.id!);
-    await drive.syncCourse(
-      course: course.toMap(),
-      students: students,
-      attendance: attendance,
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: "Course Attendance Manager PRO",
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.blue,
+      ),
+      home: const MainScreen(),
     );
-  } catch (e, st) {
-    debugPrint('Background Drive sync failed: $e');
-    debugPrint('$st');
   }
 }
 
-Future<void> syncAllLocalDataInBackground() async {
-  final drive = GoogleDriveSyncService.instance;
-  if (!drive.isConnected) return;
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
 
-  try {
-    final courses = await DatabaseHelper.instance.getCourses();
-    for (final course in courses) {
-      await syncCourseInBackground(course);
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  int currentIndex = 0;
+  int? selectedCourseId;
+
+  final dashboardKey = GlobalKey<_DashboardState>();
+  final courseKey = GlobalKey<_CoursePageState>();
+  final studentKey = GlobalKey<_StudentPageState>();
+  final marksKey = GlobalKey<_MarksPageState>();
+
+  void goTo(int index) {
+    setState(() {
+      currentIndex = index;
+    });
+
+    // Refresh the relevant page whenever it becomes visible so the
+    // dashboard and course cards always reflect the latest database data.
+    if (index == 0) {
+      dashboardKey.currentState?.loadDashboard();
+    } else if (index == 1) {
+      courseKey.currentState?.loadCourses();
+    } else if (index == 2) {
+      studentKey.currentState?.loadData();
+    } else if (index == 4) {
+      marksKey.currentState?.loadData();
     }
-  } catch (e, st) {
-    debugPrint('Drive full sync failed: $e');
-    debugPrint('$st');
-  }
-}
-
-Future<Map<String, dynamic>> buildProfileBackup() async {
-  final profile = ProfileStore.instance.notifier.value;
-  String? photoBase64;
-
-  if (profile.photoPath.trim().isNotEmpty) {
-    try {
-      final file = File(profile.photoPath);
-      if (await file.exists()) {
-        photoBase64 = base64Encode(await file.readAsBytes());
-      }
-    } catch (_) {}
   }
 
-  return {
-    'version': 1,
-    'updated_at': DateTime.now().toUtc().toIso8601String(),
-    'name': profile.name,
-    'institution': profile.institution,
-    'department': profile.department,
-    'email': profile.email,
-    'phone': profile.phone,
-    if (photoBase64 != null) 'photo_base64': photoBase64,
-  };
-}
+  void openCourseStudents(Course course) {
+    selectedCourseId = course.id;
+    goTo(2);
+  }
 
-Future<void> syncProfileInBackground() async {
-  final drive = GoogleDriveSyncService.instance;
-  if (!drive.isConnected) return;
-  try {
-    await drive.syncProfile(await buildProfileBackup());
-  } catch (e, st) {
-    debugPrint('Profile Drive sync failed: $e');
-    debugPrint('$st');
+  @override
+  Widget build(BuildContext context) {
+    final pages = [
+      Dashboard(
+        key: dashboardKey,
+        onCourse: () => goTo(1),
+        onStudent: () => goTo(2),
+        onAttendance: () => goTo(3),
+        onReport: () => goTo(5),
+        onMarks: () => goTo(4),
+      ),
+      CoursePage(
+        key: courseKey,
+        onCourseStudents: openCourseStudents,
+      ),
+      StudentPage(
+        key: studentKey,
+        initialCourseId: selectedCourseId,
+      ),
+      const AttendancePage(),
+      MarksPage(key: marksKey),
+      const ReportPage(),
+    ];
+
+    return Scaffold(
+      extendBody: true,
+      body: IndexedStack(
+        index: currentIndex,
+        children: pages,
+      ),
+      bottomNavigationBar: Container(
+        margin: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 20,
+            )
+          ],
+        ),
+        child: NavigationBar(
+          backgroundColor: Colors.transparent,
+          selectedIndex: currentIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              currentIndex = index;
+            });
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: "Home",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.book_outlined),
+              selectedIcon: Icon(Icons.book),
+              label: "Course",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.people_outline),
+              selectedIcon: Icon(Icons.people),
+              label: "Student",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.check_circle_outline),
+              selectedIcon: Icon(Icons.check_circle),
+              label: "Attend",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.edit_note_outlined),
+              selectedIcon: Icon(Icons.edit_note),
+              label: "Marks",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.analytics_outlined),
+              selectedIcon: Icon(Icons.analytics),
+              label: "Report",
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -109,28 +184,11 @@ class ProfileData {
   final String email;
   final String phone;
   final String photoPath;
-
-  ProfileData copyWith({
-    String? name,
-    String? institution,
-    String? department,
-    String? email,
-    String? phone,
-    String? photoPath,
-  }) {
-    return ProfileData(
-      name: name ?? this.name,
-      institution: institution ?? this.institution,
-      department: department ?? this.department,
-      email: email ?? this.email,
-      phone: phone ?? this.phone,
-      photoPath: photoPath ?? this.photoPath,
-    );
-  }
 }
 
 class ProfileStore {
   ProfileStore._();
+
   static final ProfileStore instance = ProfileStore._();
 
   final ValueNotifier<ProfileData> notifier =
@@ -166,828 +224,6 @@ class ProfileStore {
   }
 }
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  ProfileStore.instance.load();
-  unawaited(GoogleDriveSyncService.instance.initialize());
-  runApp(const CourseAttendanceManager());
-}
-
-class CourseAttendanceManager extends StatelessWidget {
-  const CourseAttendanceManager({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: "Course Attendance Manager PRO",
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.blue,
-      ),
-      home: const MainScreen(),
-    );
-  }
-}
-
-class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
-
-  @override
-  State<MainScreen> createState() => _MainScreenState();
-}
-
-class _MainScreenState extends State<MainScreen> {
-  int currentIndex = 0;
-
-  void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const DriveSettingsPage(),
-      ),
-    );
-  }
-
-  List<Widget> get pages => [
-        Dashboard(
-          onSettings: _openSettings,
-          onCourse: () => setState(() => currentIndex = 1),
-          onStudent: () => setState(() => currentIndex = 2),
-          onAttendance: () => setState(() => currentIndex = 3),
-          onReport: () => setState(() => currentIndex = 4),
-        ),
-        const CoursePage(),
-        const StudentPage(),
-        const AttendancePage(),
-        const ReportPage(),
-      ];
-
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xffF5F9FF),
-      body: IndexedStack(
-        index: currentIndex,
-        children: pages,
-      ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: const Color(0xffD7E8FF),
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x160B5ED7),
-                blurRadius: 24,
-                offset: Offset(0, 8),
-              ),
-            ],
-          ),
-          child: NavigationBar(
-            height: 72,
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            selectedIndex: currentIndex,
-            indicatorColor: const Color(0xffE4F0FF),
-            onDestinationSelected: (index) {
-              setState(() {
-                currentIndex = index;
-              });
-            },
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home_rounded),
-                label: "Home",
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.menu_book_outlined),
-                selectedIcon: Icon(Icons.menu_book_rounded),
-                label: "Courses",
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.people_outline_rounded),
-                selectedIcon: Icon(Icons.people_rounded),
-                label: "Students",
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.fact_check_outlined),
-                selectedIcon: Icon(Icons.fact_check_rounded),
-                label: "Attendance",
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.analytics_outlined),
-                selectedIcon: Icon(Icons.analytics_rounded),
-                label: "Reports",
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class Dashboard extends StatelessWidget {
-  const Dashboard({
-    super.key,
-    this.onSettings,
-    this.onCourse,
-    this.onStudent,
-    this.onAttendance,
-    this.onReport,
-  });
-
-  final VoidCallback? onSettings;
-  final VoidCallback? onCourse;
-  final VoidCallback? onStudent;
-  final VoidCallback? onAttendance;
-  final VoidCallback? onReport;
-
-  static const Color primary = Color(0xff0B6EDC);
-  static const Color dark = Color(0xff14213D);
-  static const Color background = Color(0xffF5F9FF);
-
-  Widget _statCard({
-    required String value,
-    required String title,
-    required String subtitle,
-    required IconData icon,
-  }) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 122),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xffC8E0FF),
-          width: 1.2,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x100B6EDC),
-            blurRadius: 14,
-            offset: Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: const Color(0xffE8F3FF),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.bar_chart_rounded,
-                  color: primary,
-                  size: 23,
-                ),
-              ),
-              const Spacer(),
-              Icon(
-                icon,
-                color: const Color(0xff9ABBE2),
-                size: 19,
-              ),
-            ],
-          ),
-          const SizedBox(height: 11),
-          Text(
-            value,
-            style: const TextStyle(
-              color: primary,
-              fontSize: 27,
-              height: 1,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            title,
-            style: const TextStyle(
-              color: dark,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: Color(0xff718096),
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _quickAction({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required VoidCallback? onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(17),
-        child: Ink(
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(
-              color: const Color(0xffC8E0FF),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: const Color(0xffEAF4FF),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  icon,
-                  color: primary,
-                  size: 25,
-                ),
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: dark,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: Color(0xff718096),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 15,
-                color: Color(0xff7EA9D7),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _sectionTitle(String title, String subtitle) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: dark,
-            fontSize: 21,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: Color(0xff718096),
-            fontSize: 12,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _attendanceOverview() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xff0B6EDC),
-            Color(0xff1488E8),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x250B6EDC),
-            blurRadius: 22,
-            offset: Offset(0, 9),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: .15),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: const Icon(
-                  Icons.fact_check_rounded,
-                  color: Colors.white,
-                  size: 27,
-                ),
-              ),
-              const SizedBox(width: 13),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Attendance Overview",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    SizedBox(height: 3),
-                    Text(
-                      "Keep track of classroom participation",
-                      style: TextStyle(
-                        color: Color(0xffDCEEFF),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.insights_rounded,
-                color: Color(0xffBFE0FF),
-              ),
-            ],
-          ),
-          const SizedBox(height: 21),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  "87%",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 42,
-                    height: 1,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: .13),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: .18),
-                  ),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.trending_up_rounded,
-                      color: Color(0xffD7F8E7),
-                      size: 17,
-                    ),
-                    SizedBox(width: 5),
-                    Text(
-                      "Overall Attendance",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: const LinearProgressIndicator(
-              value: .87,
-              minHeight: 8,
-              backgroundColor: Color(0x35FFFFFF),
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Colors.white,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _insightCard({
-    required String title,
-    required String value,
-    required String description,
-    required IconData icon,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: const Color(0xffD4E7FF),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 45,
-            height: 45,
-            decoration: BoxDecoration(
-              color: const Color(0xffEAF4FF),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(
-              icon,
-              color: primary,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  value,
-                  style: const TextStyle(
-                    color: primary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: dark,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  description,
-                  style: const TextStyle(
-                    color: Color(0xff718096),
-                    fontSize: 10,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: background,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: CustomPaint(
-              painter: _DashboardGridPainter(),
-            ),
-          ),
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 110),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: dark,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x180B6EDC),
-                              blurRadius: 14,
-                              offset: Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.school_rounded,
-                          color: Colors.white,
-                          size: 27,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "COURSE ATTENDANCE MANAGER",
-                              style: TextStyle(
-                                color: primary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.1,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              "Academic Attendance Hub",
-                              style: TextStyle(
-                                color: dark,
-                                fontSize: 20,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      ValueListenableBuilder<ProfileData>(
-                        valueListenable: ProfileStore.instance.notifier,
-                        builder: (context, profile, _) {
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              GestureDetector(
-                                onTap: onSettings,
-                                child: _ProfileAvatar(
-                                  path: profile.photoPath,
-                                  size: 46,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: onSettings,
-                                  borderRadius: BorderRadius.circular(15),
-                                  child: Ink(
-                                    width: 42,
-                                    height: 42,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(15),
-                                      border: Border.all(
-                                        color: const Color(0xffC8E0FF),
-                                      ),
-                                    ),
-                                    child: const Icon(
-                                      Icons.settings_outlined,
-                                      color: dark,
-                                      size: 21,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 21),
-                  ValueListenableBuilder<ProfileData>(
-                    valueListenable: ProfileStore.instance.notifier,
-                    builder: (context, profile, _) {
-                      final displayName = profile.name.trim().isEmpty
-                          ? "Welcome back"
-                          : "Welcome back, ${profile.name.trim()}";
-
-                      return Container(
-                        padding: const EdgeInsets.fromLTRB(19, 17, 19, 18),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: const Color(0xffC8E0FF),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.waving_hand_rounded,
-                              color: Color(0xffF59E0B),
-                              size: 24,
-                            ),
-                            const SizedBox(width: 11),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    displayName,
-                                    style: const TextStyle(
-                                      color: dark,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  const Text(
-                                    "Manage your courses, students and attendance in one place.",
-                                    style: TextStyle(
-                                      color: Color(0xff718096),
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 17),
-                  _attendanceOverview(),
-                  const SizedBox(height: 24),
-                  _sectionTitle(
-                    "At a Glance",
-                    "Your academic workspace",
-                  ),
-                  const SizedBox(height: 12),
-                  GridView.count(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 11,
-                    mainAxisSpacing: 11,
-                    childAspectRatio: 1.03,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [
-                      _statCard(
-                        value: "12",
-                        title: "Courses",
-                        subtitle: "Active courses",
-                        icon: Icons.menu_book_rounded,
-                      ),
-                      _statCard(
-                        value: "350",
-                        title: "Students",
-                        subtitle: "Across all courses",
-                        icon: Icons.people_alt_rounded,
-                      ),
-                      _statCard(
-                        value: "24",
-                        title: "Sessions",
-                        subtitle: "Attendance records",
-                        icon: Icons.calendar_month_rounded,
-                      ),
-                      _statCard(
-                        value: "87%",
-                        title: "Attendance",
-                        subtitle: "Overall rate",
-                        icon: Icons.percent_rounded,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 25),
-                  _sectionTitle(
-                    "Quick Actions",
-                    "Start your next task",
-                  ),
-                  const SizedBox(height: 12),
-                  _quickAction(
-                    title: "Add Course",
-                    subtitle: "Create a new course",
-                    icon: Icons.add_box_rounded,
-                    onTap: onCourse,
-                  ),
-                  const SizedBox(height: 9),
-                  _quickAction(
-                    title: "Manage Students",
-                    subtitle: "Add or update student records",
-                    icon: Icons.person_add_alt_1_rounded,
-                    onTap: onStudent,
-                  ),
-                  const SizedBox(height: 9),
-                  _quickAction(
-                    title: "Take Attendance",
-                    subtitle: "Record today's attendance",
-                    icon: Icons.fact_check_rounded,
-                    onTap: onAttendance,
-                  ),
-                  const SizedBox(height: 9),
-                  _quickAction(
-                    title: "View Reports",
-                    subtitle: "Review attendance analytics",
-                    icon: Icons.analytics_rounded,
-                    onTap: onReport,
-                  ),
-                  const SizedBox(height: 25),
-                  _sectionTitle(
-                    "Student Insights",
-                    "A quick view of academic records",
-                  ),
-                  const SizedBox(height: 12),
-                  _insightCard(
-                    value: "360°",
-                    title: "Student Progress",
-                    description: "Complete attendance context",
-                    icon: Icons.track_changes_rounded,
-                  ),
-                  const SizedBox(height: 9),
-                  _insightCard(
-                    value: "24",
-                    title: "Attendance Sessions",
-                    description: "Recorded classroom sessions",
-                    icon: Icons.timeline_rounded,
-                  ),
-                  const SizedBox(height: 22),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 17,
-                    ),
-                    decoration: BoxDecoration(
-                      color: dark,
-                      borderRadius: BorderRadius.circular(17),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(
-                          Icons.shield_outlined,
-                          color: Color(0xffBFDFFF),
-                        ),
-                        SizedBox(width: 11),
-                        Expanded(
-                          child: Text(
-                            "Your attendance data stays locally stored. Google Drive can be used as a backup and recovery layer when sync is enabled.",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              height: 1.45,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _DashboardGridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -998,28 +234,17 @@ class _DashboardGridPainter extends CustomPainter {
     const gap = 28.0;
 
     for (double x = 0; x <= size.width; x += gap) {
-      canvas.drawLine(
-        Offset(x, 0),
-        Offset(x, size.height),
-        paint,
-      );
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
 
     for (double y = 0; y <= size.height; y += gap) {
-      canvas.drawLine(
-        Offset(0, y),
-        Offset(size.width, y),
-        paint,
-      );
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-
 
 class _ProfileAvatar extends StatelessWidget {
   const _ProfileAvatar({
@@ -1054,13 +279,13 @@ class _ProfileAvatar extends StatelessWidget {
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => const Icon(
                   Icons.person_rounded,
-                  color: Dashboard.primary,
+                  color: Color(0xff1976D2),
                   size: 25,
                 ),
               )
             : const Icon(
                 Icons.person_rounded,
-                color: Dashboard.primary,
+                color: Color(0xff1976D2),
                 size: 25,
               ),
       ),
@@ -1068,625 +293,458 @@ class _ProfileAvatar extends StatelessWidget {
   }
 }
 
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+class Dashboard extends StatefulWidget {
+  const Dashboard({
+    super.key,
+    this.onSettings,
+    this.onCourse,
+    this.onStudent,
+    this.onAttendance,
+    this.onReport,
+    this.onMarks,
+  });
+
+  final VoidCallback? onSettings;
+  final VoidCallback? onCourse;
+  final VoidCallback? onStudent;
+  final VoidCallback? onAttendance;
+  final VoidCallback? onReport;
+  final VoidCallback? onMarks;
 
   @override
-  State<ProfilePage> createState() => _ProfilePageState();
+  State<Dashboard> createState() => _DashboardState();
 }
 
-class _ProfilePageState extends State<ProfilePage> {
-  final nameController = TextEditingController();
-  final institutionController = TextEditingController();
-  final departmentController = TextEditingController();
-  final emailController = TextEditingController();
-  final phoneController = TextEditingController();
+class _DashboardState extends State<Dashboard> {
+  static const Color primary = Color(0xff0B6EDC);
+  static const Color dark = Color(0xff14213D);
+  static const Color background = Color(0xffF5F9FF);
 
-  String photoPath = '';
-  bool saving = false;
+  bool loading = true;
+  int courseCount = 0;
+  int studentCount = 0;
+  int sessionCount = 0;
+  int presentCount = 0;
+  int attendanceTotal = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    loadDashboard();
   }
 
-  Future<void> _loadProfile() async {
-    final profile = await ProfileStore.instance.load();
+  Future<void> loadDashboard() async {
+    try {
+      final courses = await DatabaseHelper.instance.getCourses();
+      int students = 0;
+      int sessions = 0;
+      int present = 0;
+      int total = 0;
+      final sessionDates = <String>{};
 
-    nameController.text = profile.name;
-    institutionController.text = profile.institution;
-    departmentController.text = profile.department;
-    emailController.text = profile.email;
-    phoneController.text = profile.phone;
+      for (final course in courses) {
+        if (course.id == null) continue;
 
-    if (!mounted) return;
-    setState(() {
-      photoPath = profile.photoPath;
-    });
-  }
+        final courseStudents =
+            await DatabaseHelper.instance.getStudents(course.id!);
+        final records =
+            await DatabaseHelper.instance.getAttendance(course.id!);
 
-  Future<void> _pickPhoto() async {
-    final picker = ImagePicker();
+        students += courseStudents.length;
+        total += records.length;
 
-    final image = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 88,
-      maxWidth: 900,
-      maxHeight: 900,
-    );
+        for (final record in records) {
+          final status = record['status']?.toString().trim().toLowerCase();
+          final isPresent = status == 'present' ||
+              status == 'p' ||
+              status == 'true' ||
+              record['present'] == true;
 
-    if (image == null) return;
+          if (isPresent) present++;
 
-    if (!mounted) return;
-    setState(() {
-      photoPath = image.path;
-    });
-  }
+          final date = record['date']?.toString().trim();
+          if (date != null && date.isNotEmpty) {
+            sessionDates.add('${course.id}:$date');
+          }
+        }
+      }
 
-  Future<void> _saveProfile() async {
-    if (nameController.text.trim().isEmpty) {
-      _message('Please enter your name.', error: true);
-      return;
-    }
-
-    setState(() {
-      saving = true;
-    });
-
-    await ProfileStore.instance.save(
-      ProfileData(
-        name: nameController.text.trim(),
-        institution: institutionController.text.trim(),
-        department: departmentController.text.trim(),
-        email: emailController.text.trim(),
-        phone: phoneController.text.trim(),
-        photoPath: photoPath,
-      ),
-    );
-
-    unawaited(syncProfileInBackground());
-
-    if (!mounted) return;
-
-    setState(() {
-      saving = false;
-    });
-
-    _message('Profile saved successfully.');
-
-    await Future.delayed(const Duration(milliseconds: 400));
-
-    if (mounted) {
-      Navigator.pop(context);
+      if (!mounted) return;
+      setState(() {
+        courseCount = courses.length;
+        studentCount = students;
+        sessionCount = sessionDates.length;
+        presentCount = present;
+        attendanceTotal = total;
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load dashboard data: $e')),
+      );
     }
   }
 
-  void _message(String message, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: error ? Colors.red : Colors.green,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
+  double get attendancePercentage =>
+      attendanceTotal == 0 ? 0 : (presentCount / attendanceTotal) * 100;
 
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
+  String get attendanceText => '${attendancePercentage.round()}%';
+
+  Widget _statCard({
+    required String value,
+    required String title,
+    required String subtitle,
     required IconData icon,
-    TextInputType? keyboardType,
+    VoidCallback? onTap,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: TextField(
-        controller: controller,
-        keyboardType: keyboardType,
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(
-              color: Color(0xffC8E0FF),
-            ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xffC8E0FF), width: 1.2),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x100B6EDC),
+                blurRadius: 14,
+                offset: Offset(0, 5),
+              ),
+            ],
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(
-              color: Color(0xffC8E0FF),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    nameController.dispose();
-    institutionController.dispose();
-    departmentController.dispose();
-    emailController.dispose();
-    phoneController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xffF5F9FF),
-      appBar: AppBar(
-        title: const Text('Profile'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Center(
-            child: Column(
-              children: [
-                _ProfileAvatar(
-                  path: photoPath,
-                  size: 112,
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: saving ? null : _pickPhoto,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('Change Photo'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          _field(
-            controller: nameController,
-            label: 'Name *',
-            icon: Icons.person_outline,
-          ),
-          _field(
-            controller: institutionController,
-            label: 'Institution',
-            icon: Icons.account_balance_outlined,
-          ),
-          _field(
-            controller: departmentController,
-            label: 'Department',
-            icon: Icons.school_outlined,
-          ),
-          _field(
-            controller: emailController,
-            label: 'Email',
-            icon: Icons.email_outlined,
-            keyboardType: TextInputType.emailAddress,
-          ),
-          _field(
-            controller: phoneController,
-            label: 'Phone',
-            icon: Icons.phone_outlined,
-            keyboardType: TextInputType.phone,
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 52,
-            child: FilledButton.icon(
-              onPressed: saving ? null : _saveProfile,
-              icon: saving
-                  ? const SizedBox(
-                      width: 19,
-                      height: 19,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.save_outlined),
-              label: Text(saving ? 'Saving...' : 'Save Profile'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class DriveSettingsPage extends StatefulWidget {
-  const DriveSettingsPage({super.key});
-
-  @override
-  State<DriveSettingsPage> createState() => _DriveSettingsPageState();
-}
-
-class _DriveSettingsPageState extends State<DriveSettingsPage> {
-  final GoogleDriveSyncService drive =
-      GoogleDriveSyncService.instance;
-
-  bool syncOn = false;
-  bool busy = false;
-  String status = 'Sync is OFF';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadDriveState();
-  }
-
-  Future<void> _loadDriveState() async {
-    try {
-      await drive.initialize();
-    } catch (_) {}
-
-    if (!mounted) return;
-
-    setState(() {
-      syncOn = drive.isConnected;
-      status = drive.isConnected
-          ? 'Connected: ${drive.accountEmail ?? ''}'
-          : 'Sync is OFF';
-    });
-  }
-
-  Future<void> _setSync(bool value) async {
-    if (busy) return;
-
-    if (!value) {
-      await drive.disconnect();
-
-      if (!mounted) return;
-
-      setState(() {
-        syncOn = false;
-        status = 'Sync is OFF';
-      });
-      return;
-    }
-
-    setState(() {
-      busy = true;
-      status = 'Connecting to Google...';
-    });
-
-    try {
-      final account = await drive.connect();
-
-      if (!mounted) return;
-
-      setState(() {
-        syncOn = true;
-        busy = true;
-        status = 'Connected: ${account.email} • Syncing...';
-      });
-
-      // Upload the current local database as the initial backup.
-      await syncAllLocalDataInBackground();
-      await syncProfileInBackground();
-
-      if (!mounted) return;
-      setState(() {
-        busy = false;
-        status = 'Connected: ${account.email} • Backup up to date';
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Google Drive connected. Attendance folder is ready.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        syncOn = false;
-        busy = false;
-        status = 'Connection failed';
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Google Drive connection failed: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  Future<void> _restoreFromDrive() async {
-    if (!drive.isConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Connect Google Drive first.')),
-      );
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Restore backup?'),
-        content: const Text(
-          'Existing local records will be kept. Matching courses and students '
-          'will be skipped, while missing records and attendance will be imported.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Restore'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    setState(() {
-      busy = true;
-      status = 'Restoring from Google Drive...';
-    });
-
-    try {
-      int coursesAdded = 0;
-      int studentsAdded = 0;
-      int attendanceAdded = 0;
-
-      final backups = await drive.downloadCourseBackups();
-
-      for (final backup in backups) {
-        final courseMap = Map<String, dynamic>.from(
-          (backup['course'] as Map?) ?? {},
-        );
-        final oldCourseId = int.tryParse(courseMap['id']?.toString() ?? '');
-
-        final localCourses = await DatabaseHelper.instance.getCourses();
-        Course? localCourse;
-        for (final c in localCourses) {
-          if (c.code.trim().toLowerCase() ==
-                  (courseMap['code']?.toString() ?? '').trim().toLowerCase() &&
-              c.semester.trim().toLowerCase() ==
-                  (courseMap['semester']?.toString() ?? '').trim().toLowerCase() &&
-              c.section.trim().toLowerCase() ==
-                  (courseMap['section']?.toString() ?? '').trim().toLowerCase()) {
-            localCourse = c;
-            break;
-          }
-        }
-
-        if (localCourse == null) {
-          final newCourse = Course(
-            code: courseMap['code']?.toString() ?? '',
-            name: courseMap['name']?.toString() ?? '',
-            semester: courseMap['semester']?.toString() ?? '',
-            section: courseMap['section']?.toString() ?? '',
-          );
-          final newId = await DatabaseHelper.instance.insertCourse(newCourse);
-          localCourse = Course(
-            id: newId,
-            code: newCourse.code,
-            name: newCourse.name,
-            semester: newCourse.semester,
-            section: newCourse.section,
-          );
-          coursesAdded++;
-        }
-
-        if (localCourse.id == null) continue;
-
-        final idMap = <String, int>{};
-        final localStudents = await DatabaseHelper.instance.getStudents(localCourse.id!);
-        for (final s in localStudents) {
-          final sid = s['student_id']?.toString().trim().toLowerCase();
-          final dbid = int.tryParse(s['id']?.toString() ?? '');
-          if (sid != null && sid.isNotEmpty && dbid != null) idMap[sid] = dbid;
-        }
-
-        final backupStudents = (backup['students'] as List?) ?? [];
-        final oldToNewStudentId = <String, int>{};
-
-        for (final raw in backupStudents) {
-          final s = Map<String, dynamic>.from(raw as Map);
-          final sid = s['student_id']?.toString().trim() ?? '';
-          if (sid.isEmpty) continue;
-          final key = sid.toLowerCase();
-          final existing = idMap[key];
-          if (existing != null) {
-            oldToNewStudentId[s['id']?.toString() ?? ''] = existing;
-            continue;
-          }
-
-          await DatabaseHelper.instance.insertStudent({
-            'student_id': sid,
-            'name': s['name']?.toString() ?? '',
-            'course_id': localCourse.id!,
-          });
-
-          // Re-read the course roster so this also works with database
-          // helpers whose insertStudent method does not return the row id.
-          final refreshedStudents = await DatabaseHelper.instance.getStudents(localCourse.id!);
-          int? newId;
-          for (final candidate in refreshedStudents) {
-            final candidateSid = candidate['student_id']?.toString().trim().toLowerCase();
-            if (candidateSid == key) {
-              newId = int.tryParse(candidate['id']?.toString() ?? '');
-              break;
-            }
-          }
-          if (newId == null) continue;
-          idMap[key] = newId;
-          oldToNewStudentId[s['id']?.toString() ?? ''] = newId;
-          studentsAdded++;
-        }
-
-        final backupAttendance = (backup['attendance'] as List?) ?? [];
-        for (final raw in backupAttendance) {
-          final a = Map<String, dynamic>.from(raw as Map);
-          final oldStudentId = a['student_id']?.toString() ?? '';
-          final newStudentId = oldToNewStudentId[oldStudentId];
-          final date = a['date']?.toString() ?? '';
-          if (newStudentId == null || date.isEmpty) continue;
-
-          await DatabaseHelper.instance.saveOrUpdateAttendance({
-            'course_id': localCourse.id!,
-            'student_id': newStudentId,
-            'date': date,
-            'status': a['status']?.toString() ?? 'Absent',
-          });
-          attendanceAdded++;
-        }
-      }
-
-      final profileBackup = await drive.downloadProfile();
-      if (profileBackup != null) {
-        String photoPath = ProfileStore.instance.notifier.value.photoPath;
-        final photo64 = profileBackup['photo_base64']?.toString();
-        if (photo64 != null && photo64.isNotEmpty) {
-          try {
-            final dir = await getApplicationDocumentsDirectory();
-            final file = File('${dir.path}/profile_photo_restored.jpg');
-            await file.writeAsBytes(base64Decode(photo64));
-            photoPath = file.path;
-          } catch (_) {}
-        }
-
-        await ProfileStore.instance.save(
-          ProfileData(
-            name: profileBackup['name']?.toString() ?? '',
-            institution: profileBackup['institution']?.toString() ?? '',
-            department: profileBackup['department']?.toString() ?? '',
-            email: profileBackup['email']?.toString() ?? '',
-            phone: profileBackup['phone']?.toString() ?? '',
-            photoPath: photoPath,
-          ),
-        );
-      }
-
-      if (!mounted) return;
-      setState(() {
-        busy = false;
-        status = 'Restore completed';
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Restore completed: $coursesAdded courses, '
-            '$studentsAdded students, $attendanceAdded attendance records.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        busy = false;
-        status = 'Restore failed';
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Restore failed: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xffF6F8FC),
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          ValueListenableBuilder<ProfileData>(
-            valueListenable: ProfileStore.instance.notifier,
-            builder: (context, profile, _) {
-              return Card(
-                elevation: 0,
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 7,
-                  ),
-                  leading: _ProfileAvatar(
-                    path: profile.photoPath,
-                    size: 54,
-                  ),
-                  title: Text(
-                    profile.name.trim().isEmpty
-                        ? 'Set up your profile'
-                        : profile.name.trim(),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: const Color(0xffE8F3FF),
+                      borderRadius: BorderRadius.circular(13),
                     ),
+                    child: const Icon(Icons.bar_chart_rounded,
+                        color: primary, size: 23),
                   ),
-                  subtitle: Text(
-                    profile.department.trim().isEmpty
-                        ? 'Add your profile information'
-                        : profile.department.trim(),
-                  ),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const ProfilePage(),
+                  const Spacer(),
+                  Icon(icon, color: const Color(0xff9ABBE2), size: 19),
+                ],
+              ),
+              const SizedBox(height: 11),
+              loading
+                  ? const SizedBox(
+                      height: 27,
+                      width: 27,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    )
+                  : Text(
+                      value,
+                      style: const TextStyle(
+                        color: primary,
+                        fontSize: 27,
+                        height: 1,
+                        fontWeight: FontWeight.w800,
                       ),
-                    );
-                  },
+                    ),
+              const SizedBox(height: 5),
+              Text(title,
+                  style: const TextStyle(
+                      color: dark, fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(subtitle,
+                  style: const TextStyle(
+                      color: Color(0xff718096),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _attendanceOverview() {
+    final value = attendancePercentage / 100;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xff0B6EDC), Color(0xff1488E8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x250B6EDC), blurRadius: 22, offset: Offset(0, 9)),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .15),
+                  borderRadius: BorderRadius.circular(15),
                 ),
-              );
-            },
+                child: const Icon(Icons.fact_check_rounded,
+                    color: Colors.white, size: 27),
+              ),
+              const SizedBox(width: 13),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Attendance Overview',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800)),
+                    SizedBox(height: 3),
+                    Text('Keep track of classroom participation',
+                        style: TextStyle(color: Color(0xffDCEEFF), fontSize: 11)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.insights_rounded, color: Color(0xffBFE0FF)),
+            ],
+          ),
+          const SizedBox(height: 21),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  loading ? '...' : attendanceText,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 42,
+                      height: 1,
+                      fontWeight: FontWeight.w900),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .13),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withValues(alpha: .18)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.trending_up_rounded,
+                        color: Color(0xffD7F8E7), size: 17),
+                    SizedBox(width: 5),
+                    Text('Overall Attendance',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          Card(
-            elevation: 0,
-            child: SwitchListTile(
-              secondary: const Icon(Icons.cloud_sync),
-              title: const Text('Sync with Google Drive'),
-              subtitle: Text(status),
-              value: syncOn,
-              onChanged: busy ? null : _setSync,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: LinearProgressIndicator(
+              value: loading ? 0 : value.clamp(0.0, 1.0),
+              minHeight: 8,
+              backgroundColor: const Color(0x35FFFFFF),
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
             ),
           ),
-          const SizedBox(height: 12),
-          Card(
-            elevation: 0,
-            child: ListTile(
-              leading: const Icon(Icons.restore_rounded),
-              title: const Text('Restore from Google Drive'),
-              subtitle: const Text(
-                'Import courses, students and attendance from your backup.',
+        ],
+      ),
+    );
+  }
+
+  Widget _quickAction({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(17),
+        child: Ink(
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(17),
+            border: Border.all(color: const Color(0xffC8E0FF)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: const Color(0xffEAF4FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: primary, size: 25),
               ),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: busy ? null : _restoreFromDrive,
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            color: dark,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text(subtitle,
+                        style: const TextStyle(
+                            color: Color(0xff718096), fontSize: 11)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded,
+                  size: 15, color: Color(0xff7EA9D7)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: background,
+      body: Stack(
+        children: [
+          Positioned.fill(child: CustomPaint(painter: _DashboardGridPainter())),
+          SafeArea(
+            child: RefreshIndicator(
+              onRefresh: loadDashboard,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 110),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: dark,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(Icons.school_rounded,
+                              color: Colors.white, size: 27),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('COURSE MANAGER',
+                                  style: TextStyle(
+                                      color: primary,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 1.1)),
+                              SizedBox(height: 2),
+                              Text('Academic Assistant',
+                                  style: TextStyle(
+                                      color: dark,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w900)),
+                            ],
+                          ),
+                        ),
+                        ValueListenableBuilder<ProfileData>(
+                          valueListenable: ProfileStore.instance.notifier,
+                          builder: (context, profile, _) => Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              GestureDetector(
+                                onTap: widget.onSettings,
+                                child: _ProfileAvatar(path: profile.photoPath, size: 46),
+                              ),
+                              const SizedBox(width: 8),
+                              InkWell(
+                                onTap: widget.onSettings,
+                                borderRadius: BorderRadius.circular(15),
+                                child: Ink(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(15),
+                                      border: Border.all(color: const Color(0xffC8E0FF))),
+                                  child: const Icon(Icons.settings_outlined,
+                                      color: dark, size: 21),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 21),
+                    const SizedBox(height: 8),
+                    const Text('At a Glance',
+                        style: TextStyle(color: dark, fontSize: 21, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 3),
+                    const Text('Your academic workspace',
+                        style: TextStyle(color: Color(0xff718096), fontSize: 12)),
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 11,
+                      mainAxisSpacing: 11,
+                      childAspectRatio: 1.03,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      children: [
+                        _statCard(value: '$courseCount', title: 'Courses', subtitle: 'Active courses', icon: Icons.menu_book_rounded, onTap: widget.onCourse),
+                        _statCard(value: '$studentCount', title: 'Students', subtitle: 'Across all courses', icon: Icons.people_alt_rounded, onTap: widget.onStudent),
+                        _statCard(value: '$sessionCount', title: 'Sessions', subtitle: 'Attendance records', icon: Icons.calendar_month_rounded, onTap: widget.onAttendance),
+                        _statCard(value: attendanceText, title: 'Attendance', subtitle: 'Overall rate', icon: Icons.percent_rounded, onTap: widget.onReport),
+                      ],
+                    ),
+                    const SizedBox(height: 25),
+                    const Text('Quick Actions',
+                        style: TextStyle(color: dark, fontSize: 21, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 3),
+                    const Text('Start your next task',
+                        style: TextStyle(color: Color(0xff718096), fontSize: 12)),
+                    const SizedBox(height: 12),
+                    _quickAction(title: 'Add Course', subtitle: 'Create a new course', icon: Icons.add_box_rounded, onTap: widget.onCourse),
+                    const SizedBox(height: 9),
+                    _quickAction(title: 'Manage Students', subtitle: 'Add or update student records', icon: Icons.person_add_alt_1_rounded, onTap: widget.onStudent),
+                    const SizedBox(height: 9),
+                    _quickAction(title: 'Take Attendance', subtitle: "Record today's attendance", icon: Icons.fact_check_rounded, onTap: widget.onAttendance),
+                    const SizedBox(height: 9),
+                    _quickAction(title: 'Enter Marks', subtitle: 'Manage course assessments', icon: Icons.edit_note_rounded, onTap: widget.onMarks),
+                    const SizedBox(height: 9),
+                    _quickAction(title: 'View Reports', subtitle: 'Review attendance analytics', icon: Icons.analytics_rounded, onTap: widget.onReport),
+                  ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          Card(
-            elevation: 0,
-            child: ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('Data storage'),
-              subtitle: const Text(
-                'Local storage remains the primary storage. '
-                'Google Drive is used for backup and recovery.',
-              ),
-            ),
-          ),
-          if (busy)
-            const Padding(
-              padding: EdgeInsets.all(30),
-              child: Center(
-                child: CircularProgressIndicator(),
-              ),
-            ),
         ],
       ),
     );
@@ -1694,7 +752,12 @@ class _DriveSettingsPageState extends State<DriveSettingsPage> {
 }
 
 class CoursePage extends StatefulWidget {
-  const CoursePage({super.key});
+  const CoursePage({
+    super.key,
+    this.onCourseStudents,
+  });
+
+  final ValueChanged<Course>? onCourseStudents;
 
   @override
   State<CoursePage> createState() => _CoursePageState();
@@ -1702,56 +765,97 @@ class CoursePage extends StatefulWidget {
 
 class _CoursePageState extends State<CoursePage> {
   List<Course> courses = [];
+  final Map<int, int> studentCounts = {};
+  bool loadingCourses = true;
 
   @override
   void initState() {
     super.initState();
-
     loadCourses();
   }
 
   Future<void> loadCourses() async {
-    final data = await DatabaseHelper.instance.getCourses();
+    try {
+      final data = await DatabaseHelper.instance.getCourses();
+      final counts = <int, int>{};
 
-    print("TOTAL COURSE: ${data.length}");
+      for (final course in data) {
+        if (course.id == null) continue;
+        final students =
+            await DatabaseHelper.instance.getStudents(course.id!);
+        counts[course.id!] = students.length;
+      }
 
-    setState(() {
-      courses = data;
-    });
+      if (!mounted) return;
+
+      setState(() {
+        courses = data;
+        studentCounts
+          ..clear()
+          ..addAll(counts);
+        loadingCourses = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loadingCourses = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load courses: $e')),
+      );
+    }
   }
 
   void addCourseDialog() {
-    final codeController = TextEditingController();
+    _showCourseEditor();
+  }
 
-    final nameController = TextEditingController();
+  void editCourseDialog(Course course) {
+    _showCourseEditor(course: course);
+  }
 
-    final semesterController = TextEditingController();
+  void _showCourseEditor({Course? course}) {
+    final isEditing = course != null;
 
-    final sectionController = TextEditingController();
+    final codeController = TextEditingController(
+      text: course?.code ?? '',
+    );
+    final nameController = TextEditingController(
+      text: course?.name ?? '',
+    );
+    final semesterController = TextEditingController(
+      text: course?.semester ?? '',
+    );
+    final sectionController = TextEditingController(
+      text: course?.section ?? '',
+    );
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(25),
           ),
-          title: const Text(
-            "Add New Course",
-            style: TextStyle(
+          title: Text(
+            isEditing ? "Edit Course" : "Add New Course",
+            style: const TextStyle(
               fontWeight: FontWeight.bold,
             ),
           ),
           content: SingleChildScrollView(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: codeController,
+                  textCapitalization: TextCapitalization.characters,
                   decoration: const InputDecoration(
                     labelText: "Course Code",
                     prefixIcon: Icon(Icons.book),
                   ),
                 ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: nameController,
                   decoration: const InputDecoration(
@@ -1759,6 +863,7 @@ class _CoursePageState extends State<CoursePage> {
                     prefixIcon: Icon(Icons.title),
                   ),
                 ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: semesterController,
                   decoration: const InputDecoration(
@@ -1766,6 +871,7 @@ class _CoursePageState extends State<CoursePage> {
                     prefixIcon: Icon(Icons.calendar_month),
                   ),
                 ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: sectionController,
                   decoration: const InputDecoration(
@@ -1778,54 +884,138 @@ class _CoursePageState extends State<CoursePage> {
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text("Cancel"),
             ),
             ElevatedButton(
               onPressed: () async {
-                print("SAVE CLICKED");
+                final code = codeController.text.trim();
+                final name = nameController.text.trim();
+                final semester = semesterController.text.trim();
+                final section = sectionController.text.trim();
+
+                if (code.isEmpty ||
+                    name.isEmpty ||
+                    semester.isEmpty ||
+                    section.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Please fill in Course Code, Course Name, Semester and Section.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+
+                // Do not allow the exact same course offering twice.
+                // During editing, ignore the course currently being edited.
+                final duplicate = courses.any(
+                  (existing) =>
+                      existing.id != course?.id &&
+                      existing.code.trim().toLowerCase() ==
+                          code.toLowerCase() &&
+                      existing.name.trim().toLowerCase() ==
+                          name.toLowerCase() &&
+                      existing.semester.trim().toLowerCase() ==
+                          semester.toLowerCase() &&
+                      existing.section.trim().toLowerCase() ==
+                          section.toLowerCase(),
+                );
+
+                if (duplicate) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'This course offering already exists.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
 
                 try {
-                  final course = Course(
-                    code: codeController.text.trim(),
-                    name: nameController.text.trim(),
-                    semester: semesterController.text.trim(),
-                    section: sectionController.text.trim(),
-                  );
+                  if (isEditing) {
+                    // Keep the original ID so existing students and
+                    // attendance records remain linked to this course.
+                    final updatedCourse = Course(
+                      id: course!.id,
+                      code: code,
+                      name: name,
+                      semester: semester,
+                      section: section,
+                      createdAt: course.createdAt,
+                    );
 
-                  print("COURSE DATA: ${course.toMap()}");
+                    final result = await DatabaseHelper.instance
+                        .updateCourse(updatedCourse);
 
-                  final id = await DatabaseHelper.instance.insertCourse(course);
+                    if (result == 0) {
+                      throw Exception('Course could not be updated.');
+                    }
+                  } else {
+                    final newCourse = Course(
+                      code: code,
+                      name: name,
+                      semester: semester,
+                      section: section,
+                    );
 
-                  print("INSERTED ID: $id");
-                  final savedCourse = Course(
-                    id: id,
-                    code: course.code,
-                    name: course.name,
-                    semester: course.semester,
-                    section: course.section,
-                  );
-                  unawaited(syncCourseInBackground(savedCourse));
+                    final result = await DatabaseHelper.instance
+                        .insertCourse(newCourse);
 
-                  Navigator.of(context).pop();
+                    if (result == 0) {
+                      throw Exception('Course could not be saved.');
+                    }
+                  }
 
+                  if (!mounted) return;
+
+                  Navigator.of(dialogContext).pop();
                   await loadCourses();
 
-                  print("COURSE LOADED");
-                } catch (e, s) {
-                  print("ERROR: $e");
+                  if (!mounted) return;
 
-                  print(s);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        isEditing
+                            ? 'Course updated successfully.'
+                            : 'Course added successfully.',
+                      ),
+                      backgroundColor: Colors.green,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        isEditing
+                            ? 'Could not update course: $e'
+                            : 'Could not save course: $e',
+                      ),
+                      backgroundColor: Colors.red,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
                 }
               },
-              child: const Text("Save"),
-            )
+              child: Text(isEditing ? "Update" : "Save"),
+            ),
           ],
         );
       },
-    );
+    ).whenComplete(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        codeController.dispose();
+        nameController.dispose();
+        semesterController.dispose();
+        sectionController.dispose();
+      });
+    });
   }
 
   @override
@@ -1889,8 +1079,12 @@ class _CoursePageState extends State<CoursePage> {
             ),
           ),
           Expanded(
-            child: courses.isEmpty
-                ? Column(
+            child: loadingCourses
+                ? const Center(
+                    child: CircularProgressIndicator(),
+                  )
+                : courses.isEmpty
+                    ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
@@ -1920,9 +1114,11 @@ class _CoursePageState extends State<CoursePage> {
                     itemBuilder: (context, index) {
                       final course = courses[index];
 
+                      final count =
+                          course.id == null ? 0 : (studentCounts[course.id!] ?? 0);
+
                       return Container(
                         margin: const EdgeInsets.only(bottom: 15),
-                        padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(25),
@@ -1936,34 +1132,112 @@ class _CoursePageState extends State<CoursePage> {
                             )
                           ],
                         ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.blue.withValues(alpha: .15),
-                            child: const Icon(
-                              Icons.book,
-                              color: Colors.blue,
-                            ),
-                          ),
-                          title: Text(
-                            course.code,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          subtitle: Text(
-                            "${course.name}\n${course.semester} | ${course.section}",
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(
-                              Icons.delete,
-                              color: Colors.red,
-                            ),
-                            onPressed: () async {
-                              await DatabaseHelper.instance
-                                  .deleteCourse(course.id!);
-
-                              loadCourses();
+                        child: Material(
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.circular(25),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(25),
+                            onTap: () {
+                              if (widget.onCourseStudents != null) {
+                                widget.onCourseStudents!(course);
+                              }
                             },
+                            child: Padding(
+                              padding: const EdgeInsets.all(18),
+                              child: Row(
+                                children: [
+                                  CircleAvatar(
+                                    backgroundColor:
+                                        Colors.blue.withValues(alpha: .15),
+                                    child: const Icon(
+                                      Icons.book,
+                                      color: Colors.blue,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          course.code,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          course.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          "${course.semester} | ${course.section}",
+                                          style: TextStyle(
+                                            color: Colors.grey.shade600,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 9),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xffEAF4FF),
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: Text(
+                                            '$count Students',
+                                            style: const TextStyle(
+                                              color: Color(0xff2563EB),
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Icon(
+                                    Icons.arrow_forward_ios_rounded,
+                                    size: 17,
+                                    color: Color(0xff7EA9D7),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Edit course',
+                                    icon: const Icon(
+                                      Icons.edit_outlined,
+                                      color: Color(0xff2563EB),
+                                    ),
+                                    onPressed: () {
+                                      editCourseDialog(course);
+                                    },
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Delete course',
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.red,
+                                    ),
+                                    onPressed: () async {
+                                      await DatabaseHelper.instance
+                                          .deleteCourse(course.id!);
+                                      await loadCourses();
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       );
@@ -1976,92 +1250,66 @@ class _CoursePageState extends State<CoursePage> {
   }
 }
 
-Widget courseContextBanner({
-  required Course? course,
-  required int studentCount,
-  required String title,
-  required String subtitle,
-}) {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xff0B6EDC), Color(0xff1488E8)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      borderRadius: BorderRadius.circular(20),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x220B6EDC),
-          blurRadius: 16,
-          offset: Offset(0, 6),
-        ),
-      ],
-    ),
-    child: Row(
+class _StudentIdentity extends StatelessWidget {
+  const _StudentIdentity({
+    required this.studentId,
+    required this.name,
+    this.idFontSize = 16,
+    this.nameFontSize = 11,
+    this.idColor = const Color(0xff1D4ED8),
+    this.nameColor = const Color(0xff334155),
+  });
+
+  final String studentId;
+  final String name;
+  final double idFontSize;
+  final double nameFontSize;
+  final Color idColor;
+  final Color nameColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .16),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: const Icon(Icons.menu_book_rounded, color: Colors.white),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                course == null ? subtitle : '${course.code} • ${course.name}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xffDCEEFF),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+        Text(
+          studentId,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.left,
+          style: TextStyle(
+            color: idColor,
+            fontSize: idFontSize,
+            fontWeight: FontWeight.w900,
+            height: .98,
           ),
         ),
-        if (course != null)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .14),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withValues(alpha: .18)),
-            ),
-            child: Text(
-              '$studentCount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+        const SizedBox(height: 2),
+        Text(
+          name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.left,
+          style: TextStyle(
+            color: nameColor,
+            fontSize: nameFontSize,
+            fontWeight: FontWeight.w600,
+            height: 1.02,
           ),
+        ),
       ],
-    ),
-  );
+    );
+  }
 }
 
 class StudentPage extends StatefulWidget {
-  const StudentPage({super.key});
+  const StudentPage({
+    super.key,
+    this.initialCourseId,
+  });
+
+  final int? initialCourseId;
 
   @override
   State<StudentPage> createState() => _StudentPageState();
@@ -2085,6 +1333,15 @@ class _StudentPageState extends State<StudentPage> {
   void initState() {
     super.initState();
     loadData();
+  }
+
+  @override
+  void didUpdateWidget(covariant StudentPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.initialCourseId != widget.initialCourseId) {
+      loadData();
+    }
   }
 
   // ============================================================
@@ -2114,20 +1371,26 @@ class _StudentPageState extends State<StudentPage> {
 
         if (courses.isEmpty) {
           selectedCourse = null;
-        } else {
-          if (selectedCourse != null) {
-            final oldId = selectedCourse!.id;
-
-            try {
-              selectedCourse = courses.firstWhere(
-                (course) => course.id == oldId,
-              );
-            } catch (_) {
-              selectedCourse = courses.first;
-            }
-          } else {
+        } else if (widget.initialCourseId != null) {
+          try {
+            selectedCourse = courses.firstWhere(
+              (course) => course.id == widget.initialCourseId,
+            );
+          } catch (_) {
             selectedCourse = courses.first;
           }
+        } else if (selectedCourse != null) {
+          final oldId = selectedCourse!.id;
+
+          try {
+            selectedCourse = courses.firstWhere(
+              (course) => course.id == oldId,
+            );
+          } catch (_) {
+            selectedCourse = courses.first;
+          }
+        } else {
+          selectedCourse = courses.first;
         }
 
         loading = false;
@@ -2166,6 +1429,18 @@ class _StudentPageState extends State<StudentPage> {
       final data = await DatabaseHelper.instance.getStudents(
         selectedCourse!.id!,
       );
+
+      // Keep every student list in ascending roll/ID order.
+      data.sort((a, b) {
+        final aText = a['student_id']?.toString().trim() ?? '';
+        final bText = b['student_id']?.toString().trim() ?? '';
+        final aNumber = int.tryParse(aText);
+        final bNumber = int.tryParse(bText);
+        if (aNumber != null && bNumber != null) {
+          return aNumber.compareTo(bNumber);
+        }
+        return aText.toLowerCase().compareTo(bText.toLowerCase());
+      });
 
       if (!mounted) return;
 
@@ -2330,7 +1605,6 @@ class _StudentPageState extends State<StudentPage> {
                   Navigator.pop(dialogContext);
 
                   await loadStudents();
-                  unawaited(syncCourseInBackground(selectedCourse!));
 
                   showMessage(
                     t(
@@ -2642,7 +1916,6 @@ class _StudentPageState extends State<StudentPage> {
       }
 
       await loadStudents();
-      unawaited(syncCourseInBackground(selectedCourse!));
 
       if (!mounted) return;
 
@@ -2782,9 +2055,11 @@ class _StudentPageState extends State<StudentPage> {
               "শিক্ষার্থী মুছে ফেলবেন?",
             ),
           ),
-          content: Text(
-            "${student['name']}\n"
-            "${student['student_id']}",
+          content: _StudentIdentity(
+            studentId: student['student_id']?.toString() ?? '',
+            name: student['name']?.toString() ?? '',
+            idFontSize: 18,
+            nameFontSize: 12,
           ),
           actions: [
             TextButton(
@@ -2837,7 +2112,6 @@ class _StudentPageState extends State<StudentPage> {
       await DatabaseHelper.instance.deleteStudent(id);
 
       await loadStudents();
-      unawaited(syncCourseInBackground(selectedCourse!));
 
       showMessage(
         t(
@@ -2979,21 +2253,11 @@ class _StudentPageState extends State<StudentPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  studentName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  "${t("ID", "আইডি")}: $studentId",
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                  ),
+                _StudentIdentity(
+                  studentId: studentId,
+                  name: studentName,
+                  idFontSize: 16,
+                  nameFontSize: 11,
                 ),
               ],
             ),
@@ -3222,15 +2486,6 @@ class _StudentPageState extends State<StudentPage> {
                         ),
                         children: [
                           // COURSE
-                          courseContextBanner(
-                            course: selectedCourse,
-                            studentCount: students.length,
-                            title: t("Students for selected course", "নির্বাচিত কোর্সের শিক্ষার্থী"),
-                            subtitle: t("Select a course below to manage its roster.", "নিচে কোর্স নির্বাচন করে সেই কোর্সের শিক্ষার্থী পরিচালনা করুন।"),
-                          ),
-
-                          const SizedBox(height: 12),
-
                           courseSelector(),
 
                           const SizedBox(
@@ -3797,7 +3052,6 @@ class _AttendancePageState extends State<AttendancePage> {
 
       // Reload from database
       await loadAttendanceForSelectedDate();
-      unawaited(syncCourseInBackground(selectedCourse!));
 
       showMessage(
         t(
@@ -3967,24 +3221,11 @@ class _AttendancePageState extends State<AttendancePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  studentName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(
-                  height: 4,
-                ),
-                Text(
-                  "${t("ID", "আইডি")}: "
-                  "$studentId",
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                  ),
+                _StudentIdentity(
+                  studentId: studentId,
+                  name: studentName,
+                  idFontSize: 16,
+                  nameFontSize: 11,
                 ),
               ],
             ),
@@ -4207,15 +3448,6 @@ class _AttendancePageState extends State<AttendancePage> {
                           const SizedBox(
                             height: 8,
                           ),
-
-                          courseContextBanner(
-                            course: selectedCourse,
-                            studentCount: students.length,
-                            title: t("Attendance for selected course", "নির্বাচিত কোর্সের উপস্থিতি"),
-                            subtitle: t("Only students enrolled in this course are shown.", "শুধু এই কোর্সে থাকা শিক্ষার্থীরাই এখানে দেখানো হবে।"),
-                          ),
-
-                          const SizedBox(height: 12),
 
                           courseSelector(),
 
@@ -4444,6 +3676,7 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 }
 
+
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
 
@@ -4452,427 +3685,60 @@ class ReportPage extends StatefulWidget {
 }
 
 class _ReportPageState extends State<ReportPage> {
-  // ============================================================
-  // DATA
-  // ============================================================
+  static const Color primary = Color(0xff2563EB);
+  static const Color purple = Color(0xff7C3AED);
+  static const Color background = Color(0xffF6F8FC);
+  static const Color textDark = Color(0xff172033);
 
   List<Course> courses = [];
-
   Course? selectedCourse;
-
   List<Map<String, dynamic>> students = [];
-
   List<Map<String, dynamic>> attendanceRecords = [];
+  List<Map<String, dynamic>> assessments = [];
+  Map<int, List<Map<String, dynamic>>> assessmentMarks = {};
+  Map<String, TextEditingController> conversionControllers = {};
+  TextEditingController attendanceConversionController = TextEditingController();
 
   bool loading = true;
-
   bool bangla = false;
-
   bool exportingPdf = false;
-
   bool exportingExcel = false;
-
-  // ============================================================
-  // INIT
-  // ============================================================
+  int reportTab = 0;
 
   @override
   void initState() {
     super.initState();
-
     loadReport();
   }
 
-  // ============================================================
-  // LANGUAGE
-  // ============================================================
-
-  String t(String english, String banglaText) {
-    return bangla ? banglaText : english;
+  @override
+  void dispose() {
+    for (final c in conversionControllers.values) {
+      c.dispose();
+    }
+    attendanceConversionController.dispose();
+    super.dispose();
   }
 
-  // ============================================================
-  // LOAD REPORT
-  // ============================================================
+  String t(String english, String banglaText) =>
+      bangla ? banglaText : english;
 
-  Future<void> loadReport() async {
-    try {
-      if (mounted) {
-        setState(() {
-          loading = true;
-        });
-      }
-
-      final courseData = await DatabaseHelper.instance.getCourses();
-
-      if (!mounted) return;
-
-      Course? course;
-
-      if (courseData.isNotEmpty) {
-        if (selectedCourse != null) {
-          try {
-            course = courseData.firstWhere(
-              (item) => item.id == selectedCourse!.id,
-            );
-          } catch (_) {
-            course = courseData.first;
-          }
-        } else {
-          course = courseData.first;
-        }
-      }
-
-      setState(() {
-        courses = courseData;
-        selectedCourse = course;
-      });
-
-      await loadCourseReport();
-
-      if (!mounted) return;
-
-      setState(() {
-        loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        loading = false;
-      });
-
-      showMessage(
-        "${t(
-          "Failed to load report",
-          "রিপোর্ট লোড করা যায়নি",
-        )}: $e",
-        isError: true,
-      );
-    }
+  String _formatNumber(num value) {
+    final n = value.toDouble();
+    return n == n.roundToDouble() ? n.toInt().toString() : n.toString();
   }
 
-  // ============================================================
-  // LOAD SELECTED COURSE REPORT
-  // ============================================================
-
-  Future<void> loadCourseReport() async {
-    if (selectedCourse == null || selectedCourse!.id == null) {
-      if (!mounted) return;
-
-      setState(() {
-        students = [];
-        attendanceRecords = [];
-      });
-
-      return;
-    }
-
-    try {
-      final studentData = await DatabaseHelper.instance.getStudents(
-        selectedCourse!.id!,
-      );
-
-      final attendanceData = await DatabaseHelper.instance.getAttendance(
-        selectedCourse!.id!,
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        students = studentData;
-        attendanceRecords = attendanceData;
-      });
-    } catch (e) {
-      if (!mounted) return;
-
-      showMessage(
-        "${t(
-          "Failed to load attendance data",
-          "উপস্থিতির তথ্য লোড করা যায়নি",
-        )}: $e",
-        isError: true,
-      );
-    }
-  }
-
-  // ============================================================
-  // COURSE CHANGE
-  // ============================================================
-
-  Future<void> changeCourse(Course? course) async {
-    if (course == null) return;
-
-    setState(() {
-      selectedCourse = course;
-
-      students = [];
-
-      attendanceRecords = [];
-
-      loading = true;
-    });
-
-    await loadCourseReport();
-
-    if (!mounted) return;
-
-    setState(() {
-      loading = false;
-    });
-  }
-
-  // ============================================================
-  // CHECK PRESENT STATUS
-  //
-  // Supports:
-  // status: "present"
-  // status: "absent"
-  //
-  // and:
-  // present: true
-  // present: false
-  // ============================================================
-
-  bool isPresent(Map<String, dynamic> record) {
-    final status = record['status'];
-
-    if (status != null) {
-      final value = status.toString().trim().toLowerCase();
-
-      if (value == 'present' || value == 'p' || value == 'true') {
-        return true;
-      }
-
-      if (value == 'absent' || value == 'a' || value == 'false') {
-        return false;
-      }
-    }
-
-    final presentValue = record['present'];
-
-    if (presentValue is bool) {
-      return presentValue;
-    }
-
-    if (presentValue != null) {
-      return presentValue.toString().trim().toLowerCase() == 'true';
-    }
-
-    return false;
-  }
-
-  // ============================================================
-  // STUDENT DATABASE ID
-  // ============================================================
-
-  int? studentDatabaseId(
-    Map<String, dynamic> student,
-  ) {
-    final value = student['id'];
-
-    if (value is int) {
-      return value;
-    }
-
-    if (value != null) {
-      return int.tryParse(
-        value.toString(),
-      );
-    }
-
-    return null;
-  }
-
-  // ============================================================
-  // STUDENT TOTAL CLASSES
-  // ============================================================
-
-  int studentTotalClasses(
-    int studentId,
-  ) {
-    return attendanceRecords.where((record) {
-      return record['student_id'] == studentId ||
-          record['student_id']?.toString() == studentId.toString();
-    }).length;
-  }
-
-  // ============================================================
-  // PRESENT COUNT
-  // ============================================================
-
-  int studentPresentCount(
-    int studentId,
-  ) {
-    return attendanceRecords.where((record) {
-      final sameStudent = record['student_id'] == studentId ||
-          record['student_id']?.toString() == studentId.toString();
-
-      return sameStudent && isPresent(record);
-    }).length;
-  }
-
-  // ============================================================
-  // ABSENT COUNT
-  // ============================================================
-
-  int studentAbsentCount(
-    int studentId,
-  ) {
-    return attendanceRecords.where((record) {
-      final sameStudent = record['student_id'] == studentId ||
-          record['student_id']?.toString() == studentId.toString();
-
-      return sameStudent && !isPresent(record);
-    }).length;
-  }
-
-  // ============================================================
-  // STUDENT PERCENTAGE
-  // ============================================================
-
-  double studentPercentage(
-    int studentId,
-  ) {
-    final total = studentTotalClasses(studentId);
-
-    if (total == 0) {
-      return 0;
-    }
-
-    final present = studentPresentCount(studentId);
-
-    return (present / total) * 100;
-  }
-
-  // ============================================================
-  // OVERALL PRESENT
-  // ============================================================
-
-  int get overallPresent {
-    return attendanceRecords
-        .where(
-          (record) => isPresent(record),
-        )
-        .length;
-  }
-
-  // ============================================================
-  // OVERALL ABSENT
-  // ============================================================
-
-  int get overallAbsent {
-    return attendanceRecords
-        .where(
-          (record) => !isPresent(record),
-        )
-        .length;
-  }
-
-  // ============================================================
-  // OVERALL PERCENTAGE
-  // ============================================================
-
-  double get overallPercentage {
-    final total = overallPresent + overallAbsent;
-
-    if (total == 0) {
-      return 0;
-    }
-
-    return (overallPresent / total) * 100;
-  }
-
-  // ============================================================
-  // TOTAL CLASS DATES
-  // ============================================================
-
-  int get totalClasses {
-    final dates = <String>{};
-
-    for (final record in attendanceRecords) {
-      final date = record['date'];
-
-      if (date != null && date.toString().trim().isNotEmpty) {
-        dates.add(
-          date.toString().trim(),
-        );
-      }
-    }
-
-    if (dates.isNotEmpty) {
-      return dates.length;
-    }
-
-    /*
-      Fallback:
-      যদি attendance record-এ date field না থাকে,
-      তাহলে distinct attendance sessions-এর বদলে
-      student attendance records থেকে approximate
-      class count বের করা হবে।
-    */
-
-    if (students.isEmpty) {
-      return 0;
-    }
-
-    int maximum = 0;
-
-    for (final student in students) {
-      final id = studentDatabaseId(student);
-
-      if (id == null) continue;
-
-      final total = studentTotalClasses(id);
-
-      if (total > maximum) {
-        maximum = total;
-      }
-    }
-
-    return maximum;
-  }
-
-  // ============================================================
-  // PERCENTAGE TEXT
-  // ============================================================
-
-  String percentageText(
-    double value,
-  ) {
-    return "${value.toStringAsFixed(1)}%";
-  }
-
-  // ============================================================
-  // PERCENTAGE COLOR
-  // ============================================================
-
-  Color percentageColor(
-    double value,
-  ) {
-    if (value >= 80) {
-      return Colors.green;
-    }
-
-    if (value >= 60) {
-      return Colors.orange;
-    }
-
+  String percentageText(double value) => '${value.toStringAsFixed(1)}%';
+
+  Color percentageColor(double value) {
+    if (value >= 80) return Colors.green;
+    if (value >= 60) return Colors.orange;
     return Colors.red;
   }
 
-  // ============================================================
-  // SHOW MESSAGE
-  // ============================================================
-
-  void showMessage(
-    String message, {
-    bool isError = false,
-  }) {
+  void showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
-
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -4882,38 +3748,166 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // ============================================================
-  // COURSE SELECTOR
-  // ============================================================
+  Future<void> loadReport() async {
+    if (mounted) setState(() => loading = true);
+    try {
+      final data = await DatabaseHelper.instance.getCourses();
+      Course? course;
+      if (data.isNotEmpty) {
+        if (selectedCourse != null) {
+          final matches = data.where((c) => c.id == selectedCourse!.id).toList();
+          course = matches.isNotEmpty ? matches.first : data.first;
+        } else {
+          course = data.first;
+        }
+      }
 
-  Widget courseSelector() {
-    if (courses.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          t(
-            "No courses available.",
-            "কোনো কোর্স পাওয়া যায়নি।",
-          ),
-        ),
-      );
+      selectedCourse = course;
+      courses = data;
+      await loadCourseReport();
+
+      if (mounted) setState(() => loading = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+        showMessage('Failed to load report: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> loadCourseReport() async {
+    if (selectedCourse?.id == null) {
+      if (mounted) {
+        setState(() {
+          students = [];
+          attendanceRecords = [];
+          assessments = [];
+          assessmentMarks = {};
+        });
+      }
+      return;
     }
 
+    final courseId = selectedCourse!.id!;
+    final studentData = await DatabaseHelper.instance.getStudents(courseId);
+    final attendanceData =
+        await DatabaseHelper.instance.getAttendance(courseId);
+    final assessmentData =
+        await DatabaseHelper.instance.getAssessments(courseId);
+
+    final marksMap = <int, List<Map<String, dynamic>>>{};
+    for (final assessment in assessmentData) {
+      final id = int.tryParse(assessment['id'].toString());
+      if (id != null) {
+        marksMap[id] = await DatabaseHelper.instance.getMarks(id);
+      }
+    }
+
+    final savedConversions =
+        await DatabaseHelper.instance.getAssessmentConversions(courseId);
+
+    final newControllers = <String, TextEditingController>{};
+    for (final type in assessmentData
+        .map((a) => a['type']?.toString().trim() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toSet()) {
+      final value = savedConversions[type];
+      newControllers[type] = TextEditingController(
+        text: value == null ? '' : _formatNumber(value),
+      );
+    }
+    final newAttendanceController = TextEditingController(
+      text: savedConversions['__attendance__'] == null
+          ? ''
+          : _formatNumber(savedConversions['__attendance__']!),
+    );
+
+    for (final c in conversionControllers.values) {
+      c.dispose();
+    }
+
+    if (!mounted) return;
+    setState(() {
+      students = studentData;
+      attendanceRecords = attendanceData;
+      assessments = assessmentData;
+      assessmentMarks = marksMap;
+      conversionControllers = newControllers;
+      attendanceConversionController.dispose();
+      attendanceConversionController = newAttendanceController;
+    });
+  }
+
+  Future<void> changeCourse(Course? course) async {
+    if (course == null) return;
+    setState(() {
+      selectedCourse = course;
+      loading = true;
+    });
+    await loadCourseReport();
+    if (mounted) setState(() => loading = false);
+  }
+
+  bool isPresent(Map<String, dynamic> record) {
+    final status = record['status'];
+    if (status != null) {
+      final value = status.toString().trim().toLowerCase();
+      if (value == 'present' || value == 'p' || value == 'true') return true;
+      if (value == 'absent' || value == 'a' || value == 'false') return false;
+    }
+    final value = record['present'];
+    if (value is bool) return value;
+    return value?.toString().trim().toLowerCase() == 'true';
+  }
+
+  int? studentDatabaseId(Map<String, dynamic> student) {
+    final value = student['id'];
+    if (value is int) return value;
+    return value == null ? null : int.tryParse(value.toString());
+  }
+
+  int studentTotalClasses(int studentId) => attendanceRecords.where((r) =>
+      r['student_id'] == studentId ||
+      r['student_id']?.toString() == studentId.toString()).length;
+
+  int studentPresentCount(int studentId) => attendanceRecords.where((r) {
+        final same = r['student_id'] == studentId ||
+            r['student_id']?.toString() == studentId.toString();
+        return same && isPresent(r);
+      }).length;
+
+  int studentAbsentCount(int studentId) => attendanceRecords.where((r) {
+        final same = r['student_id'] == studentId ||
+            r['student_id']?.toString() == studentId.toString();
+        return same && !isPresent(r);
+      }).length;
+
+  double studentPercentage(int studentId) {
+    final total = studentTotalClasses(studentId);
+    return total == 0 ? 0 : studentPresentCount(studentId) / total * 100;
+  }
+
+  int get overallPresent => attendanceRecords.where(isPresent).length;
+  int get overallAbsent => attendanceRecords.where((r) => !isPresent(r)).length;
+
+  int get totalClasses => attendanceRecords
+      .map((r) => r['date']?.toString().trim() ?? '')
+      .where((d) => d.isNotEmpty)
+      .toSet()
+      .length;
+
+  double get overallPercentage {
+    final total = overallPresent + overallAbsent;
+    return total == 0 ? 0 : overallPresent / total * 100;
+  }
+
+  Widget courseSelector() {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 15,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: const Color(0xffE1E7F0),
-        ),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xffD8E1EE)),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<Course>(
@@ -4922,10 +3916,8 @@ class _ReportPageState extends State<ReportPage> {
           items: courses.map((course) {
             return DropdownMenuItem<Course>(
               value: course,
-              child: Text(
-                "${course.code} • ${course.name}",
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text('${course.code} • ${course.name}',
+                  overflow: TextOverflow.ellipsis),
             );
           }).toList(),
           onChanged: changeCourse,
@@ -4934,75 +3926,69 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // ============================================================
-  // OVERALL CARD
-  // ============================================================
+  Widget _tabButton(String title, IconData icon, int index) {
+    final selected = reportTab == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => reportTab = index),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(colors: [primary, purple])
+                : null,
+            color: selected ? null : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? Colors.transparent : const Color(0xffD8E1EE),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 17,
+                  color: selected ? Colors.white : const Color(0xff64748B)),
+              const SizedBox(width: 6),
+              Text(title,
+                  style: TextStyle(
+                    color: selected ? Colors.white : textDark,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-  Widget overallCard() {
-    final percentage = overallPercentage;
-
+  Widget _attendanceSummaryCard() {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(25),
+      padding: const EdgeInsets.all(19),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            Color(0xff2563EB),
-            Color(0xff06B6D4),
-          ],
+          colors: [Color(0xff2563EB), Color(0xff06B6D4)],
         ),
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(21),
       ),
       child: Column(
         children: [
-          Text(
-            t(
-              "Overall Attendance",
-              "সামগ্রিক উপস্থিতি",
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-            ),
-          ),
+          const Text('Overall Attendance',
+              style: TextStyle(color: Colors.white, fontSize: 16,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text(percentageText(overallPercentage),
+              style: const TextStyle(color: Colors.white, fontSize: 36,
+                  fontWeight: FontWeight.w900)),
           const SizedBox(height: 10),
-          Text(
-            percentageText(
-              percentage,
-            ),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 45,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 15),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 20,
-            runSpacing: 8,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              Text(
-                "${t("Present", "উপস্থিত")}: "
-                "$overallPresent",
-                style: const TextStyle(
-                  color: Colors.white,
-                ),
-              ),
-              Text(
-                "${t("Absent", "অনুপস্থিত")}: "
-                "$overallAbsent",
-                style: const TextStyle(
-                  color: Colors.white,
-                ),
-              ),
-              Text(
-                "${t("Classes", "ক্লাস")}: "
-                "$totalClasses",
-                style: const TextStyle(
-                  color: Colors.white,
-                ),
-              ),
+              _summaryMetric('Present', overallPresent, Colors.white),
+              _summaryMetric('Absent', overallAbsent, Colors.white),
+              _summaryMetric('Classes', totalClasses, Colors.white),
             ],
           ),
         ],
@@ -5010,1235 +3996,1085 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // ============================================================
-  // STUDENT REPORT
-  // ============================================================
-
-  Widget studentReport(
-    Map<String, dynamic> student,
-  ) {
-    final id = studentDatabaseId(student);
-
-    if (id == null) {
-      return const SizedBox.shrink();
-    }
-
-    final name = student['name']?.toString() ?? '';
-
-    final studentId = student['student_id']?.toString() ?? '';
-
-    final present = studentPresentCount(id);
-
-    final absent = studentAbsentCount(id);
-
-    final total = studentTotalClasses(id);
-
-    final percentage = studentPercentage(id);
-
-    final color = percentageColor(
-      percentage,
-    );
-
-    final progress = (percentage / 100).clamp(0.0, 1.0);
-
-    return Container(
-      margin: const EdgeInsets.only(
-        bottom: 15,
-      ),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(25),
-        border: Border.all(
-          color: color.withValues(alpha: .25),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: .10),
-            blurRadius: 15,
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 25,
-                backgroundColor: color.withValues(alpha: .15),
-                child: Icon(
-                  Icons.person,
-                  color: color,
-                ),
-              ),
-              const SizedBox(
-                width: 15,
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      "${t("ID", "আইডি")}: "
-                      "$studentId",
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                percentageText(
-                  percentage,
-                ),
-                style: TextStyle(
-                  color: color,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(
-            height: 15,
-          ),
-          LinearProgressIndicator(
-            value: progress,
-            minHeight: 10,
-            borderRadius: BorderRadius.circular(
-              10,
-            ),
-            color: color,
-            backgroundColor: color.withValues(alpha: .15),
-          ),
-          const SizedBox(
-            height: 14,
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: reportCount(
-                  t(
-                    "Present",
-                    "উপস্থিত",
-                  ),
-                  present,
-                  Colors.green,
-                ),
-              ),
-              Expanded(
-                child: reportCount(
-                  t(
-                    "Absent",
-                    "অনুপস্থিত",
-                  ),
-                  absent,
-                  Colors.red,
-                ),
-              ),
-              Expanded(
-                child: reportCount(
-                  t(
-                    "Total",
-                    "মোট",
-                  ),
-                  total,
-                  Colors.blue,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // REPORT COUNT
-  // ============================================================
-
-  Widget reportCount(
-    String title,
-    int value,
-    Color color,
-  ) {
+  Widget _summaryMetric(String label, int value, Color color) {
     return Column(
       children: [
-        Text(
-          value.toString(),
-          style: TextStyle(
-            color: color,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(
-          height: 3,
-        ),
-        Text(
-          title,
-          style: TextStyle(
-            color: Colors.grey.shade600,
-            fontSize: 12,
-          ),
-        ),
+        Text('$value',
+            style: TextStyle(color: color, fontSize: 17,
+                fontWeight: FontWeight.w900)),
+        Text(label,
+            style: TextStyle(color: color.withValues(alpha: .85), fontSize: 9)),
       ],
     );
   }
 
-  // ============================================================
-  // EMPTY REPORT
-  // ============================================================
+  Widget _attendanceStudentCard(Map<String, dynamic> student) {
+    final id = studentDatabaseId(student);
+    if (id == null) return const SizedBox.shrink();
+    final studentId = student['student_id']?.toString() ?? '';
+    final name = student['name']?.toString() ?? '';
+    final present = studentPresentCount(id);
+    final absent = studentAbsentCount(id);
+    final total = studentTotalClasses(id);
+    final percentage = studentPercentage(id);
+    final color = percentageColor(percentage);
 
-  Widget emptyReport() {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(40),
+      margin: const EdgeInsets.only(bottom: 9),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(25),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: color.withValues(alpha: .22)),
       ),
       child: Column(
         children: [
-          const Icon(
-            Icons.analytics_outlined,
-            size: 60,
-            color: Color(0xff94A3B8),
+          Row(
+            children: [
+              Expanded(
+                child: _StudentIdentity(
+                  studentId: studentId,
+                  name: name,
+                  idFontSize: 15,
+                  nameFontSize: 10,
+                ),
+              ),
+              Text(percentageText(percentage),
+                  style: TextStyle(color: color, fontSize: 17,
+                      fontWeight: FontWeight.w900)),
+            ],
           ),
-          const SizedBox(
-            height: 15,
-          ),
-          Text(
-            t(
-              "No attendance data available.",
-              "কোনো উপস্থিতির তথ্য পাওয়া যায়নি।",
-            ),
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: (percentage / 100).clamp(0.0, 1.0),
+              minHeight: 7,
+              color: color,
+              backgroundColor: color.withValues(alpha: .12),
             ),
           ),
-          const SizedBox(
-            height: 8,
-          ),
-          Text(
-            t(
-              "Save attendance first to generate reports.",
-              "রিপোর্ট তৈরি করতে প্রথমে উপস্থিতি সংরক্ষণ করুন।",
-            ),
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.grey.shade600,
-            ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              Expanded(child: _summaryMetric('Present', present, Colors.green)),
+              Expanded(child: _summaryMetric('Absent', absent, Colors.red)),
+              Expanded(child: _summaryMetric('Total', total, primary)),
+            ],
           ),
         ],
       ),
     );
   }
 
-  // ============================================================
-  // FILE DATE
-  // ============================================================
+  // -------------------- ASSESSMENT REPORT --------------------
 
-  String fileDate() {
-    final now = DateTime.now();
-
-    return "${now.year}-"
-        "${now.month.toString().padLeft(2, '0')}-"
-        "${now.day.toString().padLeft(2, '0')}";
+  List<String> get conductedTypes {
+    final result = <String>[];
+    for (final a in assessments) {
+      final id = int.tryParse(a['id'].toString());
+      final type = a['type']?.toString().trim() ?? '';
+      if (id == null || type.isEmpty) continue;
+      if ((assessmentMarks[id] ?? []).isEmpty) continue;
+      if (!result.any((e) => e.toLowerCase() == type.toLowerCase())) {
+        result.add(type);
+      }
+    }
+    return result;
   }
 
-  // ============================================================
-  // SAFE FILE NAME
-  // ============================================================
+  List<Map<String, dynamic>> _conductedForType(String type) {
+    return assessments.where((a) {
+      final id = int.tryParse(a['id'].toString());
+      return id != null &&
+          (assessmentMarks[id] ?? []).isNotEmpty &&
+          a['type']?.toString().trim().toLowerCase() ==
+              type.trim().toLowerCase();
+    }).toList();
+  }
 
-  String safeFileName(
-    String value,
-  ) {
-    return value.replaceAll(
-      RegExp(
-        r'[\\/:*?"<>| ]',
+  double _conversionFor(String type) =>
+      double.tryParse(conversionControllers[type]?.text.trim() ?? '') ?? 0;
+
+  bool _validateConversionsForReport() {
+    if (totalClasses <= 0 && _conductedAssessments.isEmpty) {
+      showMessage('No attendance or conducted assessment data found.', isError: true);
+      return false;
+    }
+
+    if (totalClasses > 0) {
+      final attendanceTo = double.tryParse(attendanceConversionController.text.trim()) ?? 0;
+      if (attendanceTo <= 0) {
+        showMessage('Enter a valid converted mark for Attendance.', isError: true);
+        return false;
+      }
+    }
+
+    for (final type in conductedTypes) {
+      final value = _conversionFor(type);
+      if (value <= 0) {
+        showMessage('Enter a valid converted mark for $type.', isError: true);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> saveConversions() async {
+    if (selectedCourse?.id == null) return;
+    final map = <String, double>{};
+    if (totalClasses > 0) {
+      final attendanceTo = double.tryParse(attendanceConversionController.text.trim()) ?? 0;
+      if (attendanceTo <= 0) return;
+      map['__attendance__'] = attendanceTo;
+    }
+    for (final type in conductedTypes) {
+      final value = _conversionFor(type);
+      if (value <= 0) {
+        showMessage('Enter a valid converted mark for $type.',
+            isError: true);
+        return;
+      }
+      map[type] = value;
+    }
+    await DatabaseHelper.instance
+        .saveAssessmentConversions(selectedCourse!.id!, map);
+  }
+
+  // Conversion is applied only while building the report. Raw marks remain
+  // unchanged in the database. Each conducted assessment gets its own column,
+  // while the conversion rule is shared by its assessment TYPE.
+  double _rawMarkForAssessment(int assessmentId, int studentDbId) {
+    final record = (assessmentMarks[assessmentId] ?? []).firstWhere(
+      (m) =>
+          m['student_id'] == studentDbId ||
+          m['student_id']?.toString() == studentDbId.toString(),
+      orElse: () => <String, dynamic>{},
+    );
+    return (record['marks'] as num?)?.toDouble() ?? 0;
+  }
+
+  double _convertedAssessmentMark(
+      Map<String, dynamic> assessment, int studentDbId) {
+    final assessmentId = int.tryParse(assessment['id'].toString());
+    final outOf = (assessment['out_of'] as num?)?.toDouble() ?? 0;
+    final type = assessment['type']?.toString().trim() ?? '';
+    final convertedTo = _conversionFor(type);
+    if (assessmentId == null || outOf <= 0 || convertedTo <= 0) return 0;
+
+    final raw = _rawMarkForAssessment(assessmentId, studentDbId);
+    return (raw / outOf) * convertedTo;
+  }
+
+  double _attendanceConvertedForStudent(int studentDbId) {
+    final convertedTo = double.tryParse(attendanceConversionController.text.trim()) ?? 0;
+    final total = studentTotalClasses(studentDbId);
+    if (total <= 0 || convertedTo <= 0) return 0;
+    return studentPresentCount(studentDbId) / total * convertedTo;
+  }
+
+  double _attendanceConvertedPossible() {
+    if (totalClasses <= 0) return 0;
+    return double.tryParse(attendanceConversionController.text.trim()) ?? 0;
+  }
+
+  double _totalConvertedPossible() => _attendanceConvertedPossible() + assessments
+      .where((a) {
+        final id = int.tryParse(a['id'].toString());
+        return id != null && (assessmentMarks[id] ?? []).isNotEmpty;
+      })
+      .fold<double>(0, (sum, assessment) {
+        final type = assessment['type']?.toString().trim() ?? '';
+        return sum + _conversionFor(type);
+      });
+
+  double _totalConvertedForStudent(int studentDbId) =>
+      _attendanceConvertedForStudent(studentDbId) +
+      _conductedAssessments.fold<double>(0, (sum, assessment) =>
+          sum + _convertedAssessmentMark(assessment, studentDbId));
+
+  List<Map<String, dynamic>> get _conductedAssessments {
+    return assessments.where((assessment) {
+      final id = int.tryParse(assessment['id'].toString());
+      return id != null && (assessmentMarks[id] ?? []).isNotEmpty;
+    }).toList();
+  }
+
+  Widget _assessmentDistribution() {
+    final types = conductedTypes;
+    if (types.isEmpty && totalClasses <= 0) return _emptyAssessment();
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xffDCE4EF)),
       ),
-      '_',
-    );
-  }
-
-  // ============================================================
-  // WEB DOWNLOAD
-  //
-  // IMPORTANT:
-  // No path_provider.
-  // No dart:io.
-  // Works in FlutLab Web Emulator.
-  // ============================================================
-Future<void> downloadFile(
-  List<int> bytes,
-  String fileName,
-  String mimeType,
-) async {
-  try {
-    final directory = await getApplicationDocumentsDirectory();
-
-    final file = File(
-      '${directory.path}/$fileName',
-    );
-
-    await file.writeAsBytes(
-      bytes,
-      flush: true,
-    );
-
-    await Share.shareXFiles(
-      [
-        XFile(
-          file.path,
-          mimeType: mimeType,
-        ),
-      ],
-      text: fileName,
-    );
-  } catch (e) {
-    debugPrint('Download/Share error: $e');
-    throw Exception(
-      'Could not save file: $e',
-    );
-  }
-}
-  // ============================================================
-  // EXCEL EXPORT
-  // ============================================================
-
-  Future<void> exportExcel() async {
-    if (selectedCourse == null) {
-      showMessage(
-        t(
-          "Please select a course first.",
-          "প্রথমে একটি কোর্স নির্বাচন করুন।",
-        ),
-        isError: true,
-      );
-
-      return;
-    }
-
-    if (students.isEmpty) {
-      showMessage(
-        t(
-          "No student data available.",
-          "কোনো শিক্ষার্থী তথ্য পাওয়া যায়নি।",
-        ),
-        isError: true,
-      );
-
-      return;
-    }
-
-    try {
-      setState(() {
-        exportingExcel = true;
-      });
-
-      final excel = Excel.createExcel();
-
-      final sheet = excel['Attendance Report'];
-
-      // --------------------------------------------------------
-      // TITLE
-      // --------------------------------------------------------
-
-      sheet.merge(
-        CellIndex.indexByString(
-          'A1',
-        ),
-        CellIndex.indexByString(
-          'F1',
-        ),
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'A1',
-            ),
-          )
-          .value = TextCellValue(
-        'Attendance Report',
-      );
-
-      // --------------------------------------------------------
-      // COURSE
-      // --------------------------------------------------------
-
-      sheet.merge(
-        CellIndex.indexByString(
-          'A2',
-        ),
-        CellIndex.indexByString(
-          'F2',
-        ),
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'A2',
-            ),
-          )
-          .value = TextCellValue(
-        "${selectedCourse!.code} - "
-        "${selectedCourse!.name}",
-      );
-
-      // --------------------------------------------------------
-      // SUMMARY
-      // --------------------------------------------------------
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'A3',
-            ),
-          )
-          .value = TextCellValue(
-        'Overall Attendance',
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'B3',
-            ),
-          )
-          .value = TextCellValue(
-        percentageText(
-          overallPercentage,
-        ),
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'C3',
-            ),
-          )
-          .value = TextCellValue(
-        'Present',
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'D3',
-            ),
-          )
-          .value = IntCellValue(
-        overallPresent,
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'E3',
-            ),
-          )
-          .value = TextCellValue(
-        'Absent',
-      );
-
-      sheet
-          .cell(
-            CellIndex.indexByString(
-              'F3',
-            ),
-          )
-          .value = IntCellValue(
-        overallAbsent,
-      );
-
-      // --------------------------------------------------------
-      // HEADER
-      // --------------------------------------------------------
-
-      final headers = [
-        'Student ID',
-        'Student Name',
-        'Present',
-        'Absent',
-        'Total Classes',
-        'Attendance %',
-      ];
-
-      for (int i = 0; i < headers.length; i++) {
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: i,
-                rowIndex: 4,
-              ),
-            )
-            .value = TextCellValue(
-          headers[i],
-        );
-      }
-
-      // --------------------------------------------------------
-      // STUDENT DATA
-      // --------------------------------------------------------
-
-      for (int i = 0; i < students.length; i++) {
-        final student = students[i];
-
-        final id = studentDatabaseId(
-          student,
-        );
-
-        if (id == null) {
-          continue;
-        }
-
-        final studentId = student['student_id']?.toString() ?? '';
-
-        final name = student['name']?.toString() ?? '';
-
-        final present = studentPresentCount(id);
-
-        final absent = studentAbsentCount(id);
-
-        final total = studentTotalClasses(id);
-
-        final percentage = studentPercentage(id);
-
-        final row = i + 5;
-
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: 0,
-                rowIndex: row,
-              ),
-            )
-            .value = TextCellValue(
-          studentId,
-        );
-
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: 1,
-                rowIndex: row,
-              ),
-            )
-            .value = TextCellValue(
-          name,
-        );
-
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: 2,
-                rowIndex: row,
-              ),
-            )
-            .value = IntCellValue(
-          present,
-        );
-
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: 3,
-                rowIndex: row,
-              ),
-            )
-            .value = IntCellValue(
-          absent,
-        );
-
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: 4,
-                rowIndex: row,
-              ),
-            )
-            .value = IntCellValue(
-          total,
-        );
-
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(
-                columnIndex: 5,
-                rowIndex: row,
-              ),
-            )
-            .value = TextCellValue(
-          percentageText(
-            percentage,
-          ),
-        );
-      }
-
-      // --------------------------------------------------------
-      // ENCODE
-      // --------------------------------------------------------
-
-      final fileBytes = excel.encode();
-
-      if (fileBytes == null) {
-        throw Exception(
-          'Could not generate Excel file.',
-        );
-      }
-
-      // --------------------------------------------------------
-      // DOWNLOAD
-      // --------------------------------------------------------
-
-      final courseCode = safeFileName(
-        selectedCourse!.code,
-      );
-
-      final fileName = "Attendance_${courseCode}_${fileDate()}.xlsx";
-
-      downloadFile(
-        fileBytes,
-        fileName,
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        exportingExcel = false;
-      });
-
-      showMessage(
-        t(
-          "Excel report downloaded successfully.",
-          "Excel রিপোর্ট সফলভাবে download হয়েছে।",
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        exportingExcel = false;
-      });
-
-      showMessage(
-        "${t(
-          "Excel export failed",
-          "Excel export ব্যর্থ হয়েছে",
-        )}: $e",
-        isError: true,
-      );
-    }
-  }
-
-  // ============================================================
-  // PDF EXPORT
-  // ============================================================
-
-  Future<void> exportPdf() async {
-    if (selectedCourse == null) {
-      showMessage(
-        t(
-          "Please select a course first.",
-          "প্রথমে একটি কোর্স নির্বাচন করুন।",
-        ),
-        isError: true,
-      );
-
-      return;
-    }
-
-    if (students.isEmpty) {
-      showMessage(
-        t(
-          "No student data available.",
-          "কোনো শিক্ষার্থী তথ্য পাওয়া যায়নি।",
-        ),
-        isError: true,
-      );
-
-      return;
-    }
-
-    try {
-      setState(() {
-        exportingPdf = true;
-      });
-
-      final pdf = pw.Document();
-
-      final tableData = <List<String>>[
-        [
-          'Student ID',
-          'Student Name',
-          'Present',
-          'Absent',
-          'Total',
-          'Attendance',
-        ],
-      ];
-
-      for (final student in students) {
-        final id = studentDatabaseId(
-          student,
-        );
-
-        if (id == null) {
-          continue;
-        }
-
-        final studentId = student['student_id']?.toString() ?? '';
-
-        final name = student['name']?.toString() ?? '';
-
-        final present = studentPresentCount(id);
-
-        final absent = studentAbsentCount(id);
-
-        final total = studentTotalClasses(id);
-
-        final percentage = studentPercentage(id);
-
-        tableData.add([
-          studentId,
-          name,
-          present.toString(),
-          absent.toString(),
-          total.toString(),
-          percentageText(
-            percentage,
-          ),
-        ]);
-      }
-
-      // --------------------------------------------------------
-      // PDF PAGE
-      // --------------------------------------------------------
-
-      pdf.addPage(
-        pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(
-            30,
-          ),
-          build: (context) {
-            return [
-              pw.Text(
-                'Attendance Report',
-                style: pw.TextStyle(
-                  fontSize: 24,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-
-              pw.SizedBox(
-                height: 8,
-              ),
-
-              pw.Text(
-                "${selectedCourse!.code} - "
-                "${selectedCourse!.name}",
-                style: const pw.TextStyle(
-                  fontSize: 14,
-                ),
-              ),
-
-              pw.SizedBox(
-                height: 20,
-              ),
-
-              // ------------------------------------------------
-              // SUMMARY
-              // ------------------------------------------------
-
-              pw.Container(
-                padding: const pw.EdgeInsets.all(
-                  12,
-                ),
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(
-                    color: PdfColors.grey400,
-                  ),
-                  borderRadius: pw.BorderRadius.circular(
-                    8,
-                  ),
-                ),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
-                  children: [
-                    pw.Column(
-                      children: [
-                        pw.Text(
-                          'Overall',
-                        ),
-                        pw.SizedBox(
-                          height: 5,
-                        ),
-                        pw.Text(
-                          percentageText(
-                            overallPercentage,
-                          ),
-                          style: pw.TextStyle(
-                            fontSize: 18,
-                            fontWeight: pw.FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    pw.Column(
-                      children: [
-                        pw.Text(
-                          'Present',
-                        ),
-                        pw.SizedBox(
-                          height: 5,
-                        ),
-                        pw.Text(
-                          overallPresent.toString(),
-                        ),
-                      ],
-                    ),
-                    pw.Column(
-                      children: [
-                        pw.Text(
-                          'Absent',
-                        ),
-                        pw.SizedBox(
-                          height: 5,
-                        ),
-                        pw.Text(
-                          overallAbsent.toString(),
-                        ),
-                      ],
-                    ),
-                    pw.Column(
-                      children: [
-                        pw.Text(
-                          'Classes',
-                        ),
-                        pw.SizedBox(
-                          height: 5,
-                        ),
-                        pw.Text(
-                          totalClasses.toString(),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              pw.SizedBox(
-                height: 20,
-              ),
-
-              // ------------------------------------------------
-              // TABLE
-              // ------------------------------------------------
-
-              pw.TableHelper.fromTextArray(
-                headers: tableData.first,
-                data: tableData.skip(1).toList(),
-                headerStyle: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  color: PdfColors.white,
-                ),
-                headerDecoration: const pw.BoxDecoration(
-                  color: PdfColors.blue,
-                ),
-                cellStyle: const pw.TextStyle(
-                  fontSize: 9,
-                ),
-                cellAlignment: pw.Alignment.center,
-                border: pw.TableBorder.all(
-                  color: PdfColors.grey400,
-                ),
-                cellPadding: const pw.EdgeInsets.all(
-                  6,
-                ),
-              ),
-
-              pw.SizedBox(
-                height: 20,
-              ),
-
-              pw.Text(
-                'Generated by Course Attendance Manager',
-                style: const pw.TextStyle(
-                  fontSize: 9,
-                  color: PdfColors.grey,
-                ),
-              ),
-            ];
-          },
-        ),
-      );
-
-      // --------------------------------------------------------
-      // CREATE PDF
-      // --------------------------------------------------------
-
-      final bytes = await pdf.save();
-
-      final courseCode = safeFileName(
-        selectedCourse!.code,
-      );
-
-      final fileName = "Attendance_${courseCode}_${fileDate()}.pdf";
-
-      // --------------------------------------------------------
-      // WEB DOWNLOAD
-      // --------------------------------------------------------
-
-      downloadFile(
-        bytes,
-        fileName,
-        'application/pdf',
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        exportingPdf = false;
-      });
-
-      showMessage(
-        t(
-          "PDF report downloaded successfully.",
-          "PDF রিপোর্ট সফলভাবে download হয়েছে।",
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        exportingPdf = false;
-      });
-
-      showMessage(
-        "${t(
-          "PDF export failed",
-          "PDF export ব্যর্থ হয়েছে",
-        )}: $e",
-        isError: true,
-      );
-    }
-  }
-
-  // ============================================================
-  // BUILD
-  // ============================================================
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    return Scaffold(
-      backgroundColor: const Color(0xffF6F8FC),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ==================================================
-            // HEADER
-            // ==================================================
-
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Assessment Distribution',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900,
+                  color: textDark)),
+          const SizedBox(height: 3),
+          const Text('Only conducted assessments are included.',
+              style: TextStyle(fontSize: 9, color: Color(0xff64748B))),
+          const SizedBox(height: 10),
+          if (totalClasses > 0)
             Container(
-              padding: const EdgeInsets.fromLTRB(
-                25,
-                25,
-                20,
-                30,
-              ),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xff7C3AED),
-                    Color(0xffC026D3),
-                  ],
-                ),
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(40),
-                  bottomRight: Radius.circular(40),
-                ),
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              decoration: BoxDecoration(
+                color: const Color(0xff059669).withValues(alpha: .055),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xff059669).withValues(alpha: .18)),
               ),
               child: Row(
                 children: [
-                  Expanded(
+                  Container(
+                    width: 34, height: 34,
+                    decoration: BoxDecoration(
+                      color: const Color(0xff059669).withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Icon(Icons.fact_check_rounded, color: Color(0xff059669), size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          t(
-                            "Reports 📊",
-                            "রিপোর্ট 📊",
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(
-                          height: 8,
-                        ),
-                        Text(
-                          t(
-                            "Attendance analytics",
-                            "উপস্থিতির বিশ্লেষণ",
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white70,
-                          ),
-                        ),
+                        Text('Attendance', style: TextStyle(color: Color(0xff059669), fontSize: 12, fontWeight: FontWeight.w900)),
+                        Text('Calculated from classes held', style: TextStyle(fontSize: 9, color: Color(0xff64748B))),
                       ],
                     ),
                   ),
-
-                  // LANGUAGE BUTTON
-
-                  InkWell(
-                    onTap: () {
-                      setState(() {
-                        bangla = !bangla;
-                      });
-                    },
-                    borderRadius: BorderRadius.circular(
-                      14,
-                    ),
-                    child: Container(
-                      width: 46,
-                      height: 46,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: .18),
-                        borderRadius: BorderRadius.circular(
-                          14,
-                        ),
-                      ),
-                      child: Text(
-                        bangla ? "EN" : "বাং",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
+                  SizedBox(
+                    width: 94,
+                    child: TextField(
+                      controller: attendanceConversionController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+                      decoration: InputDecoration(
+                        labelText: 'Converted to', suffixText: 'marks',
+                        labelStyle: TextStyle(fontSize: 8), suffixStyle: TextStyle(fontSize: 8),
+                        isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(9))),
                       ),
                     ),
                   ),
                 ],
               ),
             ),
+          ...types.map((type) {
+            final color = _assessmentColor(type);
+            final count = _conductedForType(type).length;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .055),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: color.withValues(alpha: .18)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(Icons.assessment_rounded, color: color, size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(type,
+                            style: TextStyle(color: color, fontSize: 12,
+                                fontWeight: FontWeight.w900)),
+                        Text('$count conducted assessment${count == 1 ? '' : 's'}',
+                            style: const TextStyle(fontSize: 9,
+                                color: Color(0xff64748B))),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    width: 94,
+                    child: TextField(
+                      controller: conversionControllers[type],
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12,
+                          fontWeight: FontWeight.w900),
+                      decoration: InputDecoration(
+                        labelText: 'Converted to',
+                        suffixText: 'marks',
+                        labelStyle: const TextStyle(fontSize: 8),
+                        suffixStyle: const TextStyle(fontSize: 8),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 8),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: saveConversions,
+              icon: const Icon(Icons.save_rounded, size: 17),
+              label: const Text('Save Conversion'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-            // ==================================================
-            // BODY
-            // ==================================================
+  Color _assessmentColor(String type) {
+    switch (type.toLowerCase()) {
+      case 'quiz':
+        return const Color(0xff2563EB);
+      case 'assignment':
+        return const Color(0xff7C3AED);
+      case 'class test':
+        return const Color(0xff0891B2);
+      case 'midterm':
+        return const Color(0xffEA580C);
+      case 'final':
+        return const Color(0xffDC2626);
+      case 'presentation':
+        return const Color(0xff059669);
+      case 'lab':
+        return const Color(0xffCA8A04);
+      default:
+        return const Color(0xff475569);
+    }
+  }
 
+  int _assessmentTypeOrder(String type) {
+    switch (type.trim().toLowerCase()) {
+      case 'quiz':
+        return 0;
+      case 'assignment':
+        return 1;
+      case 'class test':
+        return 2;
+      case 'midterm':
+        return 3;
+      case 'final':
+        return 4;
+      case 'presentation':
+        return 5;
+      case 'lab':
+        return 6;
+      default:
+        return 99;
+    }
+  }
+
+  int _naturalAssessmentNameCompare(String a, String b) {
+    final aName = a.trim();
+    final bName = b.trim();
+    final aMatch = RegExp(r'^(.*?)(\\d+)\\s*$').firstMatch(aName);
+    final bMatch = RegExp(r'^(.*?)(\\d+)\\s*$').firstMatch(bName);
+
+    if (aMatch != null && bMatch != null &&
+        aMatch.group(1)!.trim().toLowerCase() ==
+            bMatch.group(1)!.trim().toLowerCase()) {
+      final numberCompare = int.parse(aMatch.group(2)!)
+          .compareTo(int.parse(bMatch.group(2)!));
+      if (numberCompare != 0) return numberCompare;
+    }
+    return aName.toLowerCase().compareTo(bName.toLowerCase());
+  }
+
+  List<Map<String, dynamic>> get _groupedConductedAssessments {
+    final result = List<Map<String, dynamic>>.from(_conductedAssessments);
+    result.sort((a, b) {
+      final typeA = a['type']?.toString() ?? '';
+      final typeB = b['type']?.toString() ?? '';
+      final typeCompare = _assessmentTypeOrder(typeA)
+          .compareTo(_assessmentTypeOrder(typeB));
+      if (typeCompare != 0) return typeCompare;
+
+      final nameA = a['name']?.toString() ?? '';
+      final nameB = b['name']?.toString() ?? '';
+      return _naturalAssessmentNameCompare(nameA, nameB);
+    });
+    return result;
+  }
+
+  Widget _assessmentGroupHeader(String type) {
+    return Container(
+      height: 28,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: _assessmentColor(type),
+      ),
+      child: Text(
+        type.toUpperCase(),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 8,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  Widget _assessmentTable() {
+    final conducted = _groupedConductedAssessments;
+    if (conducted.isEmpty && totalClasses <= 0) return _emptyAssessment();
+
+    final groupedTypes = <String>[];
+    for (final assessment in conducted) {
+      final type = assessment['type']?.toString().trim() ?? 'Other';
+      if (!groupedTypes.any((e) => e.toLowerCase() == type.toLowerCase())) {
+        groupedTypes.add(type);
+      }
+    }
+
+    final assessmentColumnCount = conducted.length + (totalClasses > 0 ? 1 : 0);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: const Color(0xffC9D5E5)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Table(
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            columnWidths: {
+              0: const FixedColumnWidth(70),
+              1: const FixedColumnWidth(145),
+              if (totalClasses > 0) 2: const FixedColumnWidth(82),
+              for (int i = 0; i < conducted.length; i++)
+                i + 2 + (totalClasses > 0 ? 1 : 0): const FixedColumnWidth(82),
+              assessmentColumnCount + 2: const FixedColumnWidth(86),
+            },
+            border: TableBorder.all(color: const Color(0xffD6DFEB), width: .7),
+            children: [
+              TableRow(
+                children: [
+                  _assessmentGroupHeader('Student'),
+                  _assessmentGroupHeader('Student'),
+                  if (totalClasses > 0)
+                    _assessmentGroupHeader('Attendance'),
+                  // One group-header cell is required for every assessment
+                  // column because Flutter Table does not support colspan.
+                  // Repeating the type across adjacent columns keeps the
+                  // Quiz/Assignment groups visually together without causing
+                  // an irregular TableRow.
+                  ...conducted.map((assessment) => _assessmentGroupHeader(
+                      assessment['type']?.toString().trim().isEmpty == true
+                          ? 'Other'
+                          : assessment['type'].toString())),
+                  _assessmentGroupHeader('Total'),
+                ],
+              ),
+              TableRow(
+                decoration: const BoxDecoration(
+                    gradient: LinearGradient(colors: [primary, purple])),
+                children: [
+                  _reportHeader('ID'),
+                  _reportHeader('Name'),
+                  if (totalClasses > 0)
+                    _reportHeader('Attendance\n/${_formatNumber(_attendanceConvertedPossible())}'),
+                  ...conducted.map((assessment) => _reportHeader(
+                      '${assessment['name']?.toString() ?? 'Assessment'}\n/${_formatNumber(_conversionFor(assessment['type']?.toString() ?? ''))}')),
+                  _reportHeader('Total\n/${_formatNumber(_totalConvertedPossible())}'),
+                ],
+              ),
+              ...students.map((student) {
+                final dbId = studentDatabaseId(student);
+                final studentId = student['student_id']?.toString() ?? '';
+                final name = student['name']?.toString() ?? '';
+                return TableRow(
+                  children: [
+                    _reportCell(Text(studentId,
+                        style: const TextStyle(fontSize: 10,
+                            fontWeight: FontWeight.w900, color: primary))),
+                    _reportCell(
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(name, maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 9.5,
+                                height: 1.05, fontWeight: FontWeight.w600,
+                                color: textDark)),
+                      ),
+                    ),
+                    if (totalClasses > 0)
+                      _reportCell(Text(dbId == null
+                          ? '0'
+                          : _formatNumber(_attendanceConvertedForStudent(dbId)),
+                          style: const TextStyle(fontSize: 9.5,
+                              fontWeight: FontWeight.w800))),
+                    ...conducted.map((assessment) {
+                      final value = dbId == null ? 0
+                          : _convertedAssessmentMark(assessment, dbId);
+                      return _reportCell(Text(_formatNumber(value),
+                          style: const TextStyle(fontSize: 9.5,
+                              fontWeight: FontWeight.w800)));
+                    }),
+                    _reportCell(Text(dbId == null ? '0'
+                        : _formatNumber(_totalConvertedForStudent(dbId)),
+                        style: const TextStyle(fontSize: 10,
+                            fontWeight: FontWeight.w900, color: textDark))),
+                  ],
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _reportHeader(String text) => SizedBox(
+        height: 46,
+        child: Center(
+          child: Text(text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white, fontSize: 8.5,
+                  fontWeight: FontWeight.w900)),
+        ),
+      );
+
+  Widget _reportCell(Widget child) => Container(
+        constraints: const BoxConstraints(minHeight: 47),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+        alignment: Alignment.center,
+        child: child,
+      );
+
+  Widget _emptyAssessment() {
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xffDCE4EF)),
+      ),
+      child: const Column(
+        children: [
+          Icon(Icons.assessment_outlined, size: 46,
+              color: Color(0xff94A3B8)),
+          SizedBox(height: 9),
+          Text('No conducted assessments found.',
+              style: TextStyle(fontWeight: FontWeight.w800)),
+          SizedBox(height: 3),
+          Text('Enter marks for an assessment first.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xff64748B), fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  // -------------------- EXPORTS --------------------
+
+  Future<void> exportExcel() async {
+    if (selectedCourse == null) {
+      showMessage('Please select a course first.', isError: true);
+      return;
+    }
+
+    try {
+      setState(() => exportingExcel = true);
+      if (reportTab == 1) {
+        if (!_validateConversionsForReport()) {
+          if (mounted) setState(() => exportingExcel = false);
+          return;
+        }
+        await saveConversions();
+      }
+
+      final excel = Excel.createExcel();
+      final sheet = excel[
+          reportTab == 0 ? 'Attendance Report' : 'Assessment Report'];
+
+      final endColumn =
+          reportTab == 0 ? 5 : _conductedAssessments.length + (totalClasses > 0 ? 1 : 0) + 2;
+      final endLetter = _excelColumn(endColumn);
+
+      sheet.merge(CellIndex.indexByString('A1'),
+          CellIndex.indexByString('${endLetter}1'));
+      sheet.cell(CellIndex.indexByString('A1')).value =
+          TextCellValue(reportTab == 0 ? 'Attendance Report' : 'Assessment Report');
+
+      sheet.merge(CellIndex.indexByString('A2'),
+          CellIndex.indexByString('${endLetter}2'));
+      sheet.cell(CellIndex.indexByString('A2')).value =
+          TextCellValue('${selectedCourse!.code} - ${selectedCourse!.name}');
+
+      if (reportTab == 0) {
+        _buildAttendanceExcel(sheet);
+      } else {
+        _buildAssessmentExcel(sheet);
+      }
+
+      final bytes = excel.encode();
+      if (bytes == null) throw Exception('Could not generate Excel file.');
+
+      final prefix = reportTab == 0 ? 'Attendance' : 'Assessment';
+      await downloadFile(
+        bytes,
+        '${prefix}_${safeFileName(selectedCourse!.code)}_${fileDate()}.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+
+      if (mounted) {
+        setState(() => exportingExcel = false);
+        showMessage('Excel report downloaded successfully.');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => exportingExcel = false);
+        showMessage('Excel export failed: $e', isError: true);
+      }
+    }
+  }
+
+  void _buildAttendanceExcel(Sheet sheet) {
+    const headers = [
+      'Student ID', 'Student Name', 'Present', 'Absent',
+      'Total Classes', 'Attendance %'
+    ];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 3))
+          .value = TextCellValue(headers[i]);
+    }
+
+    for (int i = 0; i < students.length; i++) {
+      final student = students[i];
+      final id = studentDatabaseId(student);
+      if (id == null) continue;
+      final values = [
+        student['student_id']?.toString() ?? '',
+        student['name']?.toString() ?? '',
+        studentPresentCount(id),
+        studentAbsentCount(id),
+        studentTotalClasses(id),
+        percentageText(studentPercentage(id)),
+      ];
+      for (int c = 0; c < values.length; c++) {
+        final value = values[c];
+        sheet.cell(CellIndex.indexByColumnRow(
+                columnIndex: c, rowIndex: i + 4))
+            .value = value is int
+            ? IntCellValue(value)
+            : TextCellValue(value.toString());
+      }
+    }
+  }
+
+  void _buildAssessmentExcel(Sheet sheet) {
+    final conducted = _groupedConductedAssessments;
+    final hasAttendance = totalClasses > 0;
+    final headers = [
+      'Student ID', 'Student Name',
+      if (hasAttendance) 'Attendance /${_formatNumber(_attendanceConvertedPossible())}',
+      ...conducted.map((assessment) =>
+          '${assessment['name']?.toString() ?? 'Assessment'} /${_formatNumber(_conversionFor(assessment['type']?.toString() ?? ''))}'),
+      'Total /${_formatNumber(_totalConvertedPossible())}',
+    ];
+
+    sheet.cell(CellIndex.indexByString('A3')).value = TextCellValue('STUDENT');
+    sheet.cell(CellIndex.indexByString('B3')).value = TextCellValue('STUDENT');
+
+    var groupStart = 2;
+    if (hasAttendance) {
+      final col = _excelColumn(groupStart);
+      sheet.cell(CellIndex.indexByString('${col}3')).value = TextCellValue('ATTENDANCE');
+      groupStart++;
+    }
+
+    while (groupStart < conducted.length + 2 + (hasAttendance ? 1 : 0)) {
+      final idx = groupStart - 2 - (hasAttendance ? 1 : 0);
+      final type = conducted[idx]['type']?.toString() ?? 'Other';
+      var groupEnd = groupStart;
+      while (groupEnd < conducted.length + 2 + (hasAttendance ? 1 : 0)) {
+        final nextIdx = groupEnd - 2 - (hasAttendance ? 1 : 0);
+        if ((conducted[nextIdx]['type']?.toString() ?? 'Other').trim().toLowerCase() != type.trim().toLowerCase()) break;
+        groupEnd++;
+      }
+      final startLetter = _excelColumn(groupStart);
+      final endLetter = _excelColumn(groupEnd - 1);
+      sheet.merge(CellIndex.indexByString('${startLetter}3'), CellIndex.indexByString('${endLetter}3'));
+      sheet.cell(CellIndex.indexByString('${startLetter}3')).value = TextCellValue(type.toUpperCase());
+      groupStart = groupEnd;
+    }
+
+    final totalColumn = headers.length - 1;
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: totalColumn, rowIndex: 2))
+        .value = TextCellValue('TOTAL');
+
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 3))
+          .value = TextCellValue(headers[i]);
+    }
+
+    for (int i = 0; i < students.length; i++) {
+      final student = students[i];
+      final dbId = studentDatabaseId(student);
+      if (dbId == null) continue;
+      final values = <dynamic>[
+        student['student_id']?.toString() ?? '',
+        student['name']?.toString() ?? '',
+        if (hasAttendance) _attendanceConvertedForStudent(dbId),
+        ...conducted.map((assessment) => _convertedAssessmentMark(assessment, dbId)),
+        _totalConvertedForStudent(dbId),
+      ];
+      for (int c = 0; c < values.length; c++) {
+        final value = values[c];
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: c, rowIndex: i + 4))
+            .value = value is num
+            ? DoubleCellValue(value.toDouble())
+            : TextCellValue(value.toString());
+      }
+    }
+  }
+
+  String _excelColumn(int index) {
+    var n = index + 1;
+    var result = '';
+    while (n > 0) {
+      final rem = (n - 1) % 26;
+      result = String.fromCharCode(65 + rem) + result;
+      n = (n - 1) ~/ 26;
+    }
+    return result;
+  }
+
+  Future<void> exportPdf() async {
+    if (selectedCourse == null) {
+      showMessage('Please select a course first.', isError: true);
+      return;
+    }
+
+    try {
+      setState(() => exportingPdf = true);
+      if (reportTab == 1) {
+        if (!_validateConversionsForReport()) {
+          if (mounted) setState(() => exportingPdf = false);
+          return;
+        }
+        await saveConversions();
+      }
+
+      final pdf = pw.Document();
+      if (reportTab == 0) {
+        _buildAttendancePdf(pdf);
+      } else {
+        _buildAssessmentPdf(pdf);
+      }
+
+      final bytes = await pdf.save();
+      final prefix = reportTab == 0 ? 'Attendance' : 'Assessment';
+      await downloadFile(
+        bytes,
+        '${prefix}_${safeFileName(selectedCourse!.code)}_${fileDate()}.pdf',
+        'application/pdf',
+      );
+
+      if (mounted) {
+        setState(() => exportingPdf = false);
+        showMessage('PDF report downloaded successfully.');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => exportingPdf = false);
+        showMessage('PDF export failed: $e', isError: true);
+      }
+    }
+  }
+
+  void _buildAttendancePdf(pw.Document pdf) {
+    final data = students.map((student) {
+      final id = studentDatabaseId(student);
+      if (id == null) return <String>['', '', '', '', '', ''];
+      return [
+        student['student_id']?.toString() ?? '',
+        student['name']?.toString() ?? '',
+        studentPresentCount(id).toString(),
+        studentAbsentCount(id).toString(),
+        studentTotalClasses(id).toString(),
+        percentageText(studentPercentage(id)),
+      ];
+    }).toList();
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        build: (_) => [
+          pw.Text('Attendance Report',
+              style: pw.TextStyle(fontSize: 20,
+                  fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 5),
+          pw.Text('${selectedCourse!.code} - ${selectedCourse!.name}'),
+          pw.SizedBox(height: 14),
+          pw.TableHelper.fromTextArray(
+            headers: const [
+              'Student ID', 'Student Name', 'Present',
+              'Absent', 'Total', 'Attendance'
+            ],
+            data: data,
+            headerStyle: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+            headerDecoration:
+                const pw.BoxDecoration(color: PdfColors.blue),
+            cellStyle: const pw.TextStyle(fontSize: 8),
+            border: pw.TableBorder.all(color: PdfColors.grey400),
+            cellPadding: const pw.EdgeInsets.all(5),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _buildAssessmentPdf(pw.Document pdf) {
+    final conducted = _groupedConductedAssessments;
+    final hasAttendance = totalClasses > 0;
+    final headers = [
+      'Student ID', 'Student Name',
+      if (hasAttendance) 'Attendance /${_formatNumber(_attendanceConvertedPossible())}',
+      ...conducted.map((assessment) =>
+          '${assessment['name']?.toString() ?? 'Assessment'} /${_formatNumber(_conversionFor(assessment['type']?.toString() ?? ''))}'),
+      'Total /${_formatNumber(_totalConvertedPossible())}',
+    ];
+
+    final data = students.map((student) {
+      final id = studentDatabaseId(student);
+      if (id == null) return List<String>.filled(headers.length, '');
+      return [
+        student['student_id']?.toString() ?? '',
+        student['name']?.toString() ?? '',
+        if (hasAttendance) _formatNumber(_attendanceConvertedForStudent(id)),
+        ...conducted.map((assessment) =>
+            _formatNumber(_convertedAssessmentMark(assessment, id))),
+        _formatNumber(_totalConvertedForStudent(id)),
+      ];
+    }).toList();
+
+    final groupRow = <String>['STUDENT', 'STUDENT'];
+    if (hasAttendance) groupRow.add('ATTENDANCE');
+    String? previousType;
+    for (final assessment in conducted) {
+      final type = (assessment['type']?.toString() ?? 'Other').toUpperCase();
+      groupRow.add(type == previousType ? '' : type);
+      previousType = type;
+    }
+    groupRow.add('TOTAL');
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        build: (_) => [
+          pw.Text('Assessment Report',
+              style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 5),
+          pw.Text('${selectedCourse!.code} - ${selectedCourse!.name}'),
+          pw.SizedBox(height: 10),
+          pw.TableHelper.fromTextArray(
+            headers: headers,
+            data: data,
+            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.blue),
+            cellStyle: const pw.TextStyle(fontSize: 7),
+            border: pw.TableBorder.all(color: PdfColors.grey400),
+            cellPadding: const pw.EdgeInsets.all(4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> downloadFile(
+      List<int> bytes, String fileName, String mimeType) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/$fileName');
+    await file.writeAsBytes(bytes, flush: true);
+    await Share.shareXFiles(
+      [XFile(file.path, mimeType: mimeType)],
+      text: fileName,
+    );
+  }
+
+  String fileDate() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  String safeFileName(String value) =>
+      value.replaceAll(RegExp(r'[\\/:*?"<>| ]'), '_');
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 20, 16, 22),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [purple, Color(0xffC026D3)],
+                ),
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(28),
+                  bottomRight: Radius.circular(28),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Reports 📊',
+                            style: TextStyle(color: Colors.white,
+                                fontSize: 25, fontWeight: FontWeight.w900)),
+                        SizedBox(height: 3),
+                        Text('Attendance & Assessment',
+                            style: TextStyle(color: Colors.white70,
+                                fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () => setState(() => bangla = !bangla),
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: .18),
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: Text(bangla ? 'EN' : 'বাং',
+                          style: const TextStyle(color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Expanded(
               child: loading
-                  ? const Center(
-                      child: CircularProgressIndicator(),
-                    )
+                  ? const Center(child: CircularProgressIndicator())
                   : RefreshIndicator(
                       onRefresh: loadReport,
                       child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(
-                          20,
-                        ),
+                        padding: const EdgeInsets.fromLTRB(15, 15, 15, 105),
                         children: [
-                          // ====================================
-                          // COURSE
-                          // ====================================
-
-                          Text(
-                            t(
-                              "Course",
-                              "কোর্স",
-                            ),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-
-                          const SizedBox(
-                            height: 8,
-                          ),
-
-                          courseContextBanner(
-                            course: selectedCourse,
-                            studentCount: students.length,
-                            title: t("Report for selected course", "নির্বাচিত কোর্সের রিপোর্ট"),
-                            subtitle: t("Attendance analytics are limited to this course.", "উপস্থিতির বিশ্লেষণ শুধু এই কোর্সের জন্য।"),
-                          ),
-
-                          const SizedBox(height: 12),
-
                           courseSelector(),
-
-                          const SizedBox(
-                            height: 20,
-                          ),
-
-                          // ====================================
-                          // OVERALL
-                          // ====================================
-
-                          if (selectedCourse != null) overallCard(),
-
-                          const SizedBox(
-                            height: 25,
-                          ),
-
-                          // ====================================
-                          // STUDENT PERFORMANCE
-                          // ====================================
-
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              t(
-                                "Student Performance",
-                                "শিক্ষার্থীদের পারফরম্যান্স",
-                              ),
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(
-                            height: 15,
-                          ),
-
-                          if (students.isEmpty)
-                            emptyReport()
-                          else
-                            ...students.map(
-                              (
-                                student,
-                              ) {
-                                return studentReport(
-                                  student,
-                                );
-                              },
-                            ),
-
-                          const SizedBox(
-                            height: 20,
-                          ),
-
-                          // ====================================
-                          // EXPORT BUTTONS
-                          // ====================================
-
+                          const SizedBox(height: 11),
                           Row(
                             children: [
-                              // PDF
-
+                              _tabButton('Attendance',
+                                  Icons.fact_check_rounded, 0),
+                              const SizedBox(width: 8),
+                              _tabButton('Assessment',
+                                  Icons.assessment_rounded, 1),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          if (selectedCourse != null && reportTab == 0) ...[
+                            _attendanceSummaryCard(),
+                            const SizedBox(height: 13),
+                            if (students.isEmpty)
+                              emptyReport()
+                            else
+                              ...students.map(_attendanceStudentCard),
+                          ],
+                          if (selectedCourse != null && reportTab == 1) ...[
+                            _assessmentDistribution(),
+                            const SizedBox(height: 12),
+                            _assessmentTable(),
+                          ],
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
                               Expanded(
                                 child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.red,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.all(
-                                      15,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(
-                                        18,
-                                      ),
-                                    ),
-                                  ),
-                                  icon: exportingPdf
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.picture_as_pdf,
-                                        ),
-                                  label: Text(
-                                    exportingPdf
-                                        ? t(
-                                            "Creating...",
-                                            "তৈরি হচ্ছে...",
-                                          )
-                                        : "PDF",
-                                  ),
                                   onPressed: exportingPdf || exportingExcel
                                       ? null
                                       : exportPdf,
+                                  icon: exportingPdf
+                                      ? const SizedBox(
+                                          width: 17, height: 17,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white))
+                                      : const Icon(Icons.picture_as_pdf_rounded),
+                                  label: Text(
+                                      exportingPdf ? 'Creating...' : 'PDF'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                  ),
                                 ),
                               ),
-
-                              const SizedBox(
-                                width: 15,
-                              ),
-
-                              // EXCEL
-
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.all(
-                                      15,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(
-                                        18,
-                                      ),
-                                    ),
-                                  ),
-                                  icon: exportingExcel
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.table_chart,
-                                        ),
-                                  label: Text(
-                                    exportingExcel
-                                        ? t(
-                                            "Creating...",
-                                            "তৈরি হচ্ছে...",
-                                          )
-                                        : "Excel",
-                                  ),
                                   onPressed: exportingPdf || exportingExcel
                                       ? null
                                       : exportExcel,
+                                  icon: exportingExcel
+                                      ? const SizedBox(
+                                          width: 17, height: 17,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white))
+                                      : const Icon(Icons.table_chart_rounded),
+                                  label: Text(
+                                      exportingExcel ? 'Creating...' : 'Excel'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                  ),
                                 ),
                               ),
                             ],
-                          ),
-
-                          const SizedBox(
-                            height: 20,
                           ),
                         ],
                       ),
@@ -6247,6 +5083,1678 @@ Future<void> downloadFile(
           ],
         ),
       ),
+    );
+  }
+
+  Widget emptyReport() {
+    return Container(
+      padding: const EdgeInsets.all(30),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+      ),
+      child: const Column(
+        children: [
+          Icon(Icons.fact_check_outlined, size: 46,
+              color: Color(0xff94A3B8)),
+          SizedBox(height: 9),
+          Text('No attendance data available.',
+              style: TextStyle(fontWeight: FontWeight.w800)),
+          SizedBox(height: 4),
+          Text('Save attendance first to generate the report.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xff64748B), fontSize: 10)),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// MARKS PAGE
+// ============================================================
+
+class MarksPage extends StatefulWidget {
+  const MarksPage({super.key});
+
+  @override
+  State<MarksPage> createState() => _MarksPageState();
+}
+
+class _MarksPageState extends State<MarksPage> {
+  static const Color primary = Color(0xff2563EB);
+  static const Color purple = Color(0xff7C3AED);
+  static const Color background = Color(0xffF5F7FB);
+  static const Color textDark = Color(0xff172033);
+
+  List<Course> courses = [];
+  Course? selectedCourse;
+  List<Map<String, dynamic>> assessments = [];
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadData();
+  }
+
+  Future<void> loadData() async {
+    try {
+      final data = await DatabaseHelper.instance.getCourses();
+      if (!mounted) return;
+
+      setState(() {
+        courses = data;
+        if (selectedCourse != null) {
+          final matches = data.where((c) => c.id == selectedCourse!.id).toList();
+          selectedCourse = matches.isNotEmpty
+              ? matches.first
+              : (data.isEmpty ? null : data.first);
+        } else {
+          selectedCourse = data.isEmpty ? null : data.first;
+        }
+      });
+
+      await loadAssessments();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load marks data: $e')),
+      );
+    }
+  }
+
+  Future<void> loadAssessments() async {
+    if (selectedCourse?.id == null) {
+      if (mounted) {
+        setState(() {
+          assessments = [];
+          loading = false;
+        });
+      }
+      return;
+    }
+
+    final data =
+        await DatabaseHelper.instance.getAssessments(selectedCourse!.id!);
+
+    if (!mounted) return;
+    setState(() {
+      assessments = data;
+      loading = false;
+    });
+  }
+
+  String _nextName(String type) {
+    final prefix = type.trim().toLowerCase();
+    int maxNo = 0;
+
+    for (final a in assessments) {
+      if (a['type'].toString().trim().toLowerCase() == prefix) {
+        final match =
+            RegExp(r'(\d+)\s*$').firstMatch(a['name'].toString());
+        if (match != null) {
+          maxNo = [
+            maxNo,
+            int.tryParse(match.group(1)!) ?? 0,
+          ].reduce((a, b) => a > b ? a : b);
+        }
+      }
+    }
+
+    return '$type ${maxNo + 1}';
+  }
+
+  String _formatNumber(num value) {
+    final n = value.toDouble();
+    return n == n.roundToDouble() ? n.toInt().toString() : n.toString();
+  }
+
+  Color _assessmentColor(String type) {
+    switch (type.toLowerCase()) {
+      case 'quiz':
+        return const Color(0xff2563EB);
+      case 'assignment':
+        return const Color(0xff7C3AED);
+      case 'class test':
+        return const Color(0xff0891B2);
+      case 'midterm':
+        return const Color(0xffEA580C);
+      case 'final':
+        return const Color(0xffDC2626);
+      case 'presentation':
+        return const Color(0xff059669);
+      case 'lab':
+        return const Color(0xffCA8A04);
+      default:
+        return const Color(0xff475569);
+    }
+  }
+
+  Future<void> _addAssessment() async {
+    if (selectedCourse?.id == null) return;
+
+    final typeController = ValueNotifier<String>('Quiz');
+    final nameController =
+        TextEditingController(text: _nextName('Quiz'));
+    final outController = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Row(
+            children: const [
+              Icon(Icons.add_chart_rounded, color: primary),
+              SizedBox(width: 10),
+              Text(
+                'Add Assessment',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: typeController.value,
+                  decoration: InputDecoration(
+                    labelText: 'Assessment Type',
+                    prefixIcon: const Icon(Icons.category_rounded),
+                    filled: true,
+                    fillColor: const Color(0xffF5F7FF),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  items: const [
+                    'Quiz',
+                    'Assignment',
+                    'Class Test',
+                    'Midterm',
+                    'Final',
+                    'Presentation',
+                    'Lab',
+                    'Other'
+                  ]
+                      .map(
+                        (e) => DropdownMenuItem(
+                          value: e,
+                          child: Text(e),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    typeController.value = v;
+                    nameController.text = _nextName(v);
+                    setDialogState(() {});
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: 'Assessment Name',
+                    prefixIcon: const Icon(Icons.edit_note_rounded),
+                    filled: true,
+                    fillColor: const Color(0xffF5F7FF),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: outController,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: 'Out of Marks',
+                    prefixIcon: const Icon(Icons.score_rounded),
+                    hintText: 'e.g. 10 or 20.5',
+                    filled: true,
+                    fillColor: const Color(0xffF5F7FF),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actionsPadding:
+              const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final outOf =
+                    double.tryParse(outController.text.trim());
+                final name = nameController.text.trim();
+
+                if (name.isEmpty || outOf == null || outOf < 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Enter a valid assessment name and Out of Marks.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+
+                final id =
+                    await DatabaseHelper.instance.insertAssessment({
+                  'course_id': selectedCourse!.id,
+                  'type': typeController.value,
+                  'name': name,
+                  'out_of': outOf,
+                });
+
+                if (id == 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Assessment already exists or data is invalid.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+
+                if (mounted) Navigator.pop(dialogContext);
+                await loadAssessments();
+              },
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+      outController.dispose();
+      typeController.dispose();
+    });
+  }
+
+  Future<void> _editAssessment(
+    Map<String, dynamic> assessment,
+  ) async {
+    final nameController =
+        TextEditingController(text: assessment['name'].toString());
+    final outController = TextEditingController(
+      text: (assessment['out_of'] as num).toString(),
+    );
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.edit_rounded, color: primary),
+            SizedBox(width: 10),
+            Text(
+              'Edit Assessment',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: InputDecoration(
+                labelText: 'Assessment Name',
+                prefixIcon: const Icon(Icons.edit_note_rounded),
+                filled: true,
+                fillColor: const Color(0xffF5F7FF),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: outController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: 'Out of Marks',
+                prefixIcon: const Icon(Icons.score_rounded),
+                filled: true,
+                fillColor: const Color(0xffF5F7FF),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actionsPadding:
+            const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final outOf =
+                  double.tryParse(outController.text.trim());
+
+              if (nameController.text.trim().isEmpty ||
+                  outOf == null ||
+                  outOf < 0) {
+                return;
+              }
+
+              final result =
+                  await DatabaseHelper.instance.updateAssessment({
+                'id': assessment['id'],
+                'course_id': selectedCourse!.id,
+                'type': assessment['type'],
+                'name': nameController.text.trim(),
+                'out_of': outOf,
+              });
+
+              if (result == -1) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Out of Marks cannot be lower than an existing student mark.',
+                    ),
+                  ),
+                );
+                return;
+              }
+
+              if (result == 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Could not update assessment.'),
+                  ),
+                );
+                return;
+              }
+
+              if (mounted) Navigator.pop(dialogContext);
+              await loadAssessments();
+            },
+            icon: const Icon(Icons.save_rounded),
+            label: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+      outController.dispose();
+    });
+  }
+
+  Future<void> _deleteAssessment(
+    Map<String, dynamic> assessment,
+  ) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_outline_rounded, color: Colors.red),
+            SizedBox(width: 10),
+            Text(
+              'Delete Assessment?',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        content: Text(
+          'Delete ${assessment['name']} and all student marks for it?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (yes == true) {
+      await DatabaseHelper.instance
+          .deleteAssessment(assessment['id'] as int);
+      await loadAssessments();
+    }
+  }
+
+  Future<void> _openMarks(
+    Map<String, dynamic> assessment,
+  ) async {
+    if (selectedCourse?.id == null) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MarksEntryPage(
+          course: selectedCourse!,
+          assessment: assessment,
+        ),
+      ),
+    );
+
+    await loadAssessments();
+  }
+
+  Widget _courseSelector() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: const Color(0xffD8E1F0),
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12000000),
+            blurRadius: 14,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: DropdownButtonFormField<Course>(
+        value: selectedCourse,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: 'Select Course',
+          prefixIcon: Container(
+            margin: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [primary, purple],
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.menu_book_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          filled: true,
+          fillColor: const Color(0xffF7F9FE),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        items: courses
+            .map(
+              (c) => DropdownMenuItem(
+                value: c,
+                child: Text(
+                  '${c.code} • ${c.name} • ${c.section}',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: (c) async {
+          setState(() {
+            selectedCourse = c;
+            loading = true;
+          });
+          await loadAssessments();
+        },
+      ),
+    );
+  }
+
+  Widget _assessmentCard(
+    Map<String, dynamic> assessment,
+    int index,
+  ) {
+    final color = _assessmentColor(assessment['type'].toString());
+    final outOf = (assessment['out_of'] as num).toDouble();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: color.withValues(alpha: .18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: .08),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _openMarks(assessment),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      color,
+                      color.withValues(alpha: .72),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${index + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      assessment['name'].toString(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: textDark,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 5,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: .10),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            assessment['type'].toString(),
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xffF1F5F9),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Out of ${_formatNumber(outOf)}',
+                            style: const TextStyle(
+                              color: Color(0xff475569),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Edit',
+                onPressed: () => _editAssessment(assessment),
+                icon: const Icon(
+                  Icons.edit_outlined,
+                  color: Color(0xff64748B),
+                ),
+              ),
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  if (v == 'edit') _editAssessment(assessment);
+                  if (v == 'delete') _deleteAssessment(assessment);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_outlined),
+                        SizedBox(width: 8),
+                        Text('Edit'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Delete'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: background,
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: background,
+        surfaceTintColor: Colors.transparent,
+        titleSpacing: 18,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Marks',
+              style: TextStyle(
+                color: textDark,
+                fontSize: 23,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Text(
+              'Assessments & student scores',
+              style: TextStyle(
+                color: Color(0xff64748B),
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [primary, purple],
+              ),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: IconButton(
+              tooltip: 'Add Assessment',
+              onPressed: selectedCourse == null ? null : _addAssessment,
+              color: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ),
+        ],
+      ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                _courseSelector(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Assessments',
+                          style: TextStyle(
+                            color: textDark,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (assessments.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xffE8F0FF),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '${assessments.length} total',
+                            style: const TextStyle(
+                              color: primary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: selectedCourse == null
+                      ? Center(
+                          child: _EmptyMarksState(
+                            icon: Icons.menu_book_outlined,
+                            title: 'No course available',
+                            subtitle: 'Add a course before entering marks.',
+                            buttonText: 'Go to Courses',
+                            onPressed: null,
+                          ),
+                        )
+                      : assessments.isEmpty
+                          ? Center(
+                              child: _EmptyMarksState(
+                                icon: Icons.assignment_outlined,
+                                title: 'No assessments yet',
+                                subtitle:
+                                    'Create Quiz, Assignment, Exam or other assessments.',
+                                buttonText: 'Add Assessment',
+                                onPressed: _addAssessment,
+                              ),
+                            )
+                          : RefreshIndicator(
+                              onRefresh: loadAssessments,
+                              child: ListView.builder(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  2,
+                                  16,
+                                  120,
+                                ),
+                                itemCount: assessments.length,
+                                itemBuilder: (_, i) =>
+                                    _assessmentCard(assessments[i], i),
+                              ),
+                            ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _EmptyMarksState extends StatelessWidget {
+  const _EmptyMarksState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.buttonText,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String buttonText;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: const Color(0xffDDE5F1),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 70,
+            height: 70,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [
+                  Color(0xff2563EB),
+                  Color(0xff7C3AED),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: Icon(
+              icon,
+              color: Colors.white,
+              size: 34,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: Color(0xff172033),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xff64748B),
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 18),
+          if (onPressed != null)
+            FilledButton.icon(
+              onPressed: onPressed,
+              icon: const Icon(Icons.add_rounded),
+              label: Text(buttonText),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ============================================================
+// MARKS ENTRY TABLE
+// ============================================================
+
+class MarksEntryPage extends StatefulWidget {
+  const MarksEntryPage({
+    super.key,
+    required this.course,
+    required this.assessment,
+  });
+
+  final Course course;
+  final Map<String, dynamic> assessment;
+
+  @override
+  State<MarksEntryPage> createState() => _MarksEntryPageState();
+}
+
+class _MarksEntryPageState extends State<MarksEntryPage> {
+  static const Color primary = Color(0xff2563EB);
+  static const Color purple = Color(0xff7C3AED);
+  static const Color background = Color(0xffF5F7FB);
+  static const Color textDark = Color(0xff172033);
+
+  List<Map<String, dynamic>> students = [];
+  final Map<int, String> status = {};
+  final Map<int, TextEditingController> controllers = {};
+  bool loading = true;
+  bool saving = false;
+
+  double get outOf =>
+      (widget.assessment['out_of'] as num).toDouble();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final loadedStudents = await DatabaseHelper.instance
+          .getStudents(widget.course.id!);
+
+      final saved = await DatabaseHelper.instance
+          .getMarks(widget.assessment['id'] as int);
+
+      final savedByStudent = {
+        for (final m in saved) m['student_id'] as int: m
+      };
+
+      for (final s in loadedStudents) {
+        final id = s['id'] as int;
+        final old = savedByStudent[id];
+
+        status[id] =
+            old?['status']?.toString() == 'Absent'
+                ? 'Absent'
+                : 'Present';
+
+        controllers[id] = TextEditingController(
+          text: old == null || status[id] == 'Absent'
+              ? ''
+              : _formatNumber(
+                  (old['marks'] as num).toDouble(),
+                ),
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        students = loadedStudents;
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
+    }
+  }
+
+  String _formatNumber(double n) =>
+      n == n.roundToDouble() ? n.toInt().toString() : n.toString();
+
+  Color _rowColor(int index) {
+    return index.isEven ? Colors.white : const Color(0xffF8FAFD);
+  }
+
+  Color _statusColor(String value) {
+    return value == 'Absent'
+        ? const Color(0xffDC2626)
+        : const Color(0xff059669);
+  }
+
+  @override
+  void dispose() {
+    for (final c in controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (saving) return;
+
+    final entries = <Map<String, dynamic>>[];
+
+    for (final s in students) {
+      final id = s['id'] as int;
+      final st = status[id] ?? 'Present';
+
+      if (st == 'Absent') {
+        entries.add({
+          'student_id': id,
+          'status': 'Absent',
+          'marks': 0.0,
+        });
+        continue;
+      }
+
+      final raw = controllers[id]!.text.trim();
+
+      if (raw.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Enter marks for ${s['name']} before saving.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final value = double.tryParse(raw);
+
+      if (value == null || value < 0 || value > outOf) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Invalid marks for ${s['name']}. '
+              'Marks must be between 0 and ${_formatNumber(outOf)}.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      entries.add({
+        'student_id': id,
+        'status': 'Present',
+        'marks': value,
+      });
+    }
+
+    setState(() => saving = true);
+
+    final result = await DatabaseHelper.instance.saveMarksBulk(
+      widget.assessment['id'] as int,
+      entries,
+    );
+
+    if (!mounted) return;
+
+    setState(() => saving = false);
+
+    if (result == 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Marks saved successfully.'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xff059669),
+        ),
+      );
+      Navigator.pop(context);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save marks.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Widget _infoHeader() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [primary, purple],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x252563EB),
+            blurRadius: 18,
+            offset: Offset(0, 7),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .16),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: .20),
+              ),
+            ),
+            child: const Icon(
+              Icons.edit_note_rounded,
+              color: Colors.white,
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.assessment['name'].toString(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${widget.course.code} • ${widget.course.name}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xffE7EEFF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 8,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                const Text(
+                  'OUT OF',
+                  style: TextStyle(
+                    color: Color(0xffE7EEFF),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .7,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatNumber(outOf),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _legend() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.touch_app_rounded,
+            size: 15,
+            color: Color(0xff64748B),
+          ),
+          const SizedBox(width: 5),
+          const Expanded(
+            child: Text(
+              'Enter marks for Present students. Absent students receive 0.',
+              style: TextStyle(
+                color: Color(0xff64748B),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 9,
+              vertical: 5,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xffE8F7F0),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '${students.length} students',
+              style: const TextStyle(
+                color: Color(0xff047857),
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusToggle(int id) {
+    final isPresent = (status[id] ?? 'Present') == 'Present';
+
+    return Semantics(
+      label: isPresent ? 'Present' : 'Absent',
+      button: true,
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            status[id] = isPresent ? 'Absent' : 'Present';
+
+            if (!isPresent) {
+              // Absent -> Present: marks must be entered again.
+              controllers[id]!.clear();
+            } else {
+              // Present -> Absent: default marks become 0.
+              controllers[id]!.text = '0';
+            }
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: 48,
+          height: 26,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: isPresent
+                ? const Color(0xffA8D9B0)
+                : const Color(0xffD6DCE5),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isPresent
+                  ? const Color(0xff8BC998)
+                  : const Color(0xffC4CBD6),
+              width: 1,
+            ),
+          ),
+          child: AnimatedAlign(
+            duration: const Duration(milliseconds: 160),
+            alignment: isPresent
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: Container(
+              width: 20,
+              height: 20,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x26000000),
+                    blurRadius: 3,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _marksField(int id) {
+    final absent = status[id] == 'Absent';
+
+    return Container(
+      height: 36,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: absent
+            ? const Color(0xffF1F3F6)
+            : const Color(0xffF8FAFF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: absent
+              ? const Color(0xffD1D7E0)
+              : const Color(0xffAFC5F5),
+          width: 1,
+        ),
+      ),
+      child: TextField(
+        controller: controllers[id],
+        enabled: !absent,
+        keyboardType:
+            const TextInputType.numberWithOptions(decimal: true),
+        textAlign: TextAlign.center,
+        textInputAction: TextInputAction.done,
+        style: TextStyle(
+          color: absent
+              ? const Color(0xff64748B)
+              : const Color(0xff172033),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+        decoration: InputDecoration(
+          hintText: _formatNumber(outOf),
+          hintStyle: const TextStyle(
+            color: Color(0xffA0A9B8),
+            fontSize: 10,
+          ),
+          suffixText: '/${_formatNumber(outOf)}',
+          suffixStyle: const TextStyle(
+            color: Color(0xff94A3B8),
+            fontSize: 8.5,
+            fontWeight: FontWeight.w600,
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+          border: InputBorder.none,
+          isDense: true,
+        ),
+      ),
+    );
+  }
+
+  Widget _marksTable() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: const Color(0xffB8C7DD),
+          width: 1,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Table(
+          defaultVerticalAlignment:
+              TableCellVerticalAlignment.middle,
+          border: TableBorder(
+            horizontalInside: const BorderSide(
+              color: Color(0xffDCE3ED),
+              width: .8,
+            ),
+            verticalInside: const BorderSide(
+              color: Color(0xffDCE3ED),
+              width: .8,
+            ),
+          ),
+          columnWidths: const {
+            0: FixedColumnWidth(34),
+            1: FlexColumnWidth(4.3),
+            2: FixedColumnWidth(58),
+            3: FixedColumnWidth(76),
+          },
+          children: [
+            TableRow(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [primary, purple],
+                ),
+              ),
+              children: const [
+                _TableHeaderCell('#'),
+                _TableHeaderCell('Student'),
+                _TableHeaderCell('P/A'),
+                _TableHeaderCell('Marks'),
+              ],
+            ),
+            ...List.generate(students.length, (index) {
+              final s = students[index];
+              final id = s['id'] as int;
+
+              return TableRow(
+                decoration: BoxDecoration(
+                  color: _rowColor(index),
+                ),
+                children: [
+                  _TableBodyCell(
+                    minHeight: 50,
+                    child: Center(
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          color: primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  _TableBodyCell(
+                    minHeight: 50,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 5,
+                      ),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: _StudentIdentity(
+                          studentId: s['student_id'].toString(),
+                          name: s['name'].toString(),
+                          idFontSize: 14,
+                          nameFontSize: 9.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                  _TableBodyCell(
+                    minHeight: 50,
+                    child: Center(
+                      child: _statusToggle(id),
+                    ),
+                  ),
+                  _TableBodyCell(
+                    minHeight: 50,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                      ),
+                      child: _marksField(id),
+                    ),
+                  ),
+                ],
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: background,
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: background,
+        surfaceTintColor: Colors.transparent,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Marks Entry',
+              style: TextStyle(
+                color: textDark,
+                fontSize: 21,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Text(
+              'Student-wise assessment table',
+              style: TextStyle(
+                color: Color(0xff64748B),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xffE8F7F0),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: IconButton(
+              tooltip: 'Save Marks',
+              onPressed: saving ? null : _save,
+              color: const Color(0xff047857),
+              icon: saving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                      ),
+                    )
+                  : const Icon(Icons.save_rounded),
+            ),
+          ),
+        ],
+      ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : students.isEmpty
+              ? const Center(
+                  child: _EmptyMarksState(
+                    icon: Icons.people_outline_rounded,
+                    title: 'No students in this course',
+                    subtitle:
+                        'Add students to the course before entering marks.',
+                    buttonText: '',
+                    onPressed: null,
+                  ),
+                )
+              : Column(
+                  children: [
+                    _infoHeader(),
+                    _legend(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        physics:
+                            const AlwaysScrollableScrollPhysics(),
+                        child: _marksTable(),
+                      ),
+                    ),
+                    SafeArea(
+                      top: false,
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(
+                          14,
+                          8,
+                          14,
+                          10,
+                        ),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          border: Border(
+                            top: BorderSide(
+                              color: Color(0xffDDE5F1),
+                            ),
+                          ),
+                        ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: FilledButton.icon(
+                            onPressed: saving ? null : _save,
+                            icon: saving
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child:
+                                        CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.save_rounded,
+                                  ),
+                            label: Text(
+                              saving
+                                  ? 'Saving Marks...'
+                                  : 'Save All Marks',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+    );
+  }
+}
+
+class _TableHeaderCell extends StatelessWidget {
+  const _TableHeaderCell(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 38,
+      child: Center(
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 9.5,
+            fontWeight: FontWeight.w900,
+            letterSpacing: .2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TableBodyCell extends StatelessWidget {
+  const _TableBodyCell({
+    required this.child,
+    this.minHeight = 50,
+  });
+
+  final Widget child;
+  final double minHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        minHeight: minHeight,
+      ),
+      alignment: Alignment.center,
+      child: child,
     );
   }
 }
