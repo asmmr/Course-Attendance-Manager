@@ -15,6 +15,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'services/google_drive_sync_service.dart';
+
 import 'database/database_helper.dart';
 import 'models/course.dart';
 
@@ -51,6 +53,12 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int currentIndex = 0;
   int? selectedCourseId;
+
+  void _openSettings(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsPage()),
+    );
+  }
 
   final dashboardKey = GlobalKey<_DashboardState>();
   final courseKey = GlobalKey<_CoursePageState>();
@@ -90,6 +98,7 @@ class _MainScreenState extends State<MainScreen> {
         onAttendance: () => goTo(3),
         onReport: () => goTo(5),
         onMarks: () => goTo(4),
+        onSettings: () => _openSettings(context),
       ),
       CoursePage(
         key: courseKey,
@@ -6011,6 +6020,737 @@ class _EmptyMarksState extends StatelessWidget {
   }
 }
 
+
+
+// ============================================================
+// SETTINGS
+// ============================================================
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  static const Color primary = Color(0xff0B6EDC);
+  static const Color dark = Color(0xff14213D);
+  static const Color background = Color(0xffF5F9FF);
+
+  bool loading = true;
+  bool connecting = false;
+  bool disconnecting = false;
+  bool backingUp = false;
+  bool restoring = false;
+  bool autoSyncEnabled = true;
+  String lastBackup = 'No backup recorded';
+  String? accountEmail;
+  String driveStatus = 'Not connected';
+  String folderStatus = 'Attendance folder not checked';
+  String? errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDriveState();
+    ProfileStore.instance.load();
+    GoogleDriveSyncService.instance.initialize();
+  }
+
+  Future<void> _loadDriveState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final service = GoogleDriveSyncService.instance;
+      await service.initialize();
+
+      if (!mounted) return;
+      setState(() {
+        accountEmail = service.accountEmail ?? prefs.getString('drive_account_email');
+        driveStatus = service.isConnected ? 'Connected' : 'Not connected';
+        folderStatus = prefs.getString('drive_root_folder_id') != null
+            ? 'Attendance folder ready ✓'
+            : 'Attendance folder not checked';
+        autoSyncEnabled = prefs.getBool('drive_auto_sync_enabled') ?? true;
+        lastBackup = _formatBackupTime(prefs.getString('drive_last_backup_at'));
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        errorText = e.toString();
+      });
+    }
+  }
+
+  String _formatBackupTime(String? iso) {
+    if (iso == null || iso.isEmpty) return 'No backup recorded';
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return 'No backup recorded';
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
+  }
+
+  Future<void> _setAutoSync(bool enabled) async {
+    if (autoSyncEnabled == enabled) return;
+
+    setState(() {
+      autoSyncEnabled = enabled;
+      errorText = null;
+    });
+
+    try {
+      await GoogleDriveSyncService.instance.setAutoSyncEnabled(enabled);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled
+                ? 'Auto Sync enabled.'
+                : 'Auto Sync disabled. Manual sync is still available.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => autoSyncEnabled = !enabled);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not change Auto Sync: $e')),
+      );
+    }
+  }
+
+  Future<void> _backupNow() async {
+    if (backingUp) return;
+    if (!GoogleDriveSyncService.instance.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connect Google Drive first.')),
+      );
+      return;
+    }
+    setState(() {
+      backingUp = true;
+      errorText = null;
+      driveStatus = 'Backing up...';
+    });
+    try {
+      final data = await DatabaseHelper.instance.exportAllData();
+      await GoogleDriveSyncService.instance.syncFullBackup(data);
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        backingUp = false;
+        driveStatus = 'Connected';
+        lastBackup = _formatBackupTime(prefs.getString('drive_last_backup_at'));
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Backup completed successfully.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        backingUp = false;
+        driveStatus = 'Backup failed';
+        errorText = e.toString();
+      });
+    }
+  }
+
+  Future<void> _restoreNow() async {
+    if (restoring) return;
+    if (!GoogleDriveSyncService.instance.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connect Google Drive first.')),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore from Google Drive?'),
+        content: const Text(
+          'Missing courses, students, attendance, assessments and marks will '
+          'be restored. Existing matching records will be preserved.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Restore')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() {
+      restoring = true;
+      errorText = null;
+      driveStatus = 'Restoring...';
+    });
+    try {
+      final backup = await GoogleDriveSyncService.instance.downloadFullBackup();
+      if (backup == null) throw Exception('No full backup was found in the Attendance folder.');
+      final result = await DatabaseHelper.instance.restoreAllData(backup);
+      if (!mounted) return;
+      setState(() {
+        restoring = false;
+        driveStatus = 'Connected';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Restore complete: ${result['courses']} courses, '
+            '${result['students']} students, ${result['attendance']} attendance, '
+            '${result['assessments']} assessments, ${result['marks']} marks added.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        restoring = false;
+        driveStatus = 'Restore failed';
+        errorText = e.toString();
+      });
+    }
+  }
+
+  Future<void> _connectDrive() async {
+    if (connecting) return;
+    setState(() {
+      connecting = true;
+      errorText = null;
+      driveStatus = 'Connecting...';
+      folderStatus = 'Creating/checking Attendance folder...';
+    });
+
+    try {
+      final account = await GoogleDriveSyncService.instance.connect();
+      final prefs = await SharedPreferences.getInstance();
+      final folderId = prefs.getString('drive_root_folder_id');
+
+      if (!mounted) return;
+      setState(() {
+        accountEmail = account.email;
+        driveStatus = 'Connected';
+        folderStatus = folderId != null
+            ? 'Attendance folder created/ready ✓'
+            : 'Connected, but folder ID was not saved';
+        connecting = false;
+      });
+
+      // First connection creates/checks the Attendance folder and immediately
+      // stores a full backup of the current local data.
+      await _backupNow();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Google Drive connected. Attendance folder is ready.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        connecting = false;
+        driveStatus = 'Connection failed';
+        folderStatus = 'Attendance folder unavailable';
+        errorText = e.toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Google Drive connection failed: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _disconnectDrive() async {
+    if (disconnecting) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Disconnect Google Drive?'),
+        content: const Text(
+          'This stops Drive synchronization on this device. '
+          'Existing backups in Google Drive will not be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      disconnecting = true;
+      errorText = null;
+    });
+
+    try {
+      await GoogleDriveSyncService.instance.disconnect();
+      if (!mounted) return;
+      setState(() {
+        accountEmail = null;
+        driveStatus = 'Not connected';
+        folderStatus = 'Attendance folder not checked';
+        disconnecting = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        disconnecting = false;
+        errorText = e.toString();
+      });
+    }
+  }
+
+  Widget _sectionTitle(String title, String subtitle) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 20, 18, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                  color: dark, fontSize: 19, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 3),
+          Text(subtitle,
+              style: const TextStyle(
+                  color: Color(0xff718096), fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  Widget _profileCard(ProfileData profile) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 18),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xffDCE7F5)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(14),
+        leading: _ProfileAvatar(path: profile.photoPath, size: 54),
+        title: Text(
+          profile.name.isEmpty ? 'Profile' : profile.name,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        subtitle: Text(
+          profile.department.isEmpty
+              ? (profile.institution.isEmpty ? 'Add your profile details' : profile.institution)
+              : profile.department,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ProfilePage()),
+        ),
+      ),
+    );
+  }
+
+  Widget _driveCard() {
+    final connected = driveStatus == 'Connected';
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 18),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: connected
+              ? const Color(0xffB7E4CF)
+              : const Color(0xffDCE7F5),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: connected
+                        ? const Color(0xffE8F8EF)
+                        : const Color(0xffEEF5FF),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    Icons.cloud_done_rounded,
+                    color: connected
+                        ? const Color(0xff059669)
+                        : primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Google Drive Backup',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                if (loading || connecting)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Icon(
+                    connected
+                        ? Icons.check_circle_rounded
+                        : Icons.cloud_off_rounded,
+                    color: connected
+                        ? const Color(0xff059669)
+                        : const Color(0xff94A3B8),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 15),
+            _statusRow(
+              Icons.account_circle_outlined,
+              'Account',
+              accountEmail ?? 'Not connected',
+            ),
+            const SizedBox(height: 9),
+            _statusRow(
+              Icons.folder_rounded,
+              'Drive folder',
+              folderStatus,
+            ),
+            const SizedBox(height: 9),
+            _statusRow(
+              Icons.sync_rounded,
+              'Sync status',
+              driveStatus,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xffF7FAFF),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xffDCE7F5)),
+              ),
+              child: SwitchListTile.adaptive(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                title: const Text(
+                  'Auto Sync',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  connected
+                      ? 'Automatically sync changed data every few minutes'
+                      : 'Connect Google Drive to use Auto Sync',
+                  style: const TextStyle(fontSize: 10, color: Color(0xff64748B)),
+                ),
+                value: autoSyncEnabled,
+                onChanged: connected && !backingUp && !restoring
+                    ? _setAutoSync
+                    : null,
+              ),
+            ),
+            if (errorText != null) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  errorText!,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xffDC2626),
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 9),
+            _statusRow(Icons.schedule_rounded, 'Last backup', lastBackup),
+            const SizedBox(height: 15),
+            if (connected) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: backingUp || restoring ? null : _backupNow,
+                      icon: const Icon(Icons.backup_rounded),
+                      label: Text(backingUp ? 'Syncing...' : 'Sync now'),
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: backingUp || restoring ? null : _restoreNow,
+                      icon: const Icon(Icons.restore_rounded),
+                      label: Text(restoring ? 'Restoring...' : 'Restore'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 9),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: disconnecting || backingUp || restoring ? null : _disconnectDrive,
+                  icon: const Icon(Icons.link_off_rounded),
+                  label: Text(disconnecting ? 'Disconnecting...' : 'Disconnect Google Drive'),
+                ),
+              ),
+            ] else
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: connecting ? null : _connectDrive,
+                  icon: const Icon(Icons.add_link_rounded),
+                  label: Text(connecting ? 'Connecting...' : 'Sync with Google Drive'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statusRow(IconData icon, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 19, color: const Color(0xff64748B)),
+        const SizedBox(width: 9),
+        Text('$label: ',
+            style: const TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w700)),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Color(0xff475569),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: background,
+      appBar: AppBar(
+        title: const Text(
+          'Settings',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+        backgroundColor: background,
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadDriveState,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.only(bottom: 35),
+          children: [
+            _sectionTitle(
+              'Profile',
+              'Manage your academic profile',
+            ),
+            ValueListenableBuilder<ProfileData>(
+              valueListenable: ProfileStore.instance.notifier,
+              builder: (context, profile, _) => _profileCard(profile),
+            ),
+            _sectionTitle(
+              'Backup & Recovery',
+              'Keep your course data safe in your own Google Drive',
+            ),
+            _driveCard(),
+            const SizedBox(height: 8),
+            Card(
+              margin: const EdgeInsets.symmetric(horizontal: 18),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+                side: const BorderSide(color: Color(0xffDCE7F5)),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.all(15),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline_rounded,
+                        color: primary, size: 20),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'When Google Drive is connected, Auto Sync can automatically upload changed data to an '
+                        'Attendance folder for backup data. It checks for changes while the app is open. Existing backups '
+                        'are not deleted when you disconnect.',
+                        style: TextStyle(
+                          color: Color(0xff475569),
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// PROFILE
+// ============================================================
+
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  final name = TextEditingController();
+  final institution = TextEditingController();
+  final department = TextEditingController();
+  final email = TextEditingController();
+  final phone = TextEditingController();
+  String photoPath = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final p = await ProfileStore.instance.load();
+    name.text = p.name;
+    institution.text = p.institution;
+    department.text = p.department;
+    email.text = p.email;
+    phone.text = p.phone;
+    if (mounted) setState(() => photoPath = p.photoPath);
+  }
+
+  Future<void> _pickPhoto() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+    if (result == null || result.files.single.path == null) return;
+    setState(() => photoPath = result.files.single.path!);
+  }
+
+  Future<void> _save() async {
+    await ProfileStore.instance.save(ProfileData(
+      name: name.text.trim(),
+      institution: institution.text.trim(),
+      department: department.text.trim(),
+      email: email.text.trim(),
+      phone: phone.text.trim(),
+      photoPath: photoPath,
+    ));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Profile saved successfully.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    institution.dispose();
+    department.dispose();
+    email.dispose();
+    phone.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _dec(String label, IconData icon) => InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Profile',
+            style: TextStyle(fontWeight: FontWeight.w900)),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          Center(
+            child: GestureDetector(
+              onTap: _pickPhoto,
+              child: _ProfileAvatar(path: photoPath, size: 92),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Center(
+            child: Text('Tap photo to change',
+                style: TextStyle(color: Color(0xff718096), fontSize: 11)),
+          ),
+          const SizedBox(height: 20),
+          TextField(controller: name, decoration: _dec('Name', Icons.person_outline)),
+          const SizedBox(height: 12),
+          TextField(controller: institution, decoration: _dec('Institution', Icons.account_balance_outlined)),
+          const SizedBox(height: 12),
+          TextField(controller: department, decoration: _dec('Department', Icons.school_outlined)),
+          const SizedBox(height: 12),
+          TextField(controller: email, keyboardType: TextInputType.emailAddress,
+              decoration: _dec('Email', Icons.email_outlined)),
+          const SizedBox(height: 12),
+          TextField(controller: phone, keyboardType: TextInputType.phone,
+              decoration: _dec('Phone', Icons.phone_outlined)),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: _save,
+            icon: const Icon(Icons.save_rounded),
+            label: const Text('Save Profile'),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 // ============================================================
 // MARKS ENTRY TABLE

@@ -186,20 +186,6 @@ class DatabaseHelper {
       }
     }
 
-    // Remove course-specific assessment conversion settings as well.
-    final conversionData = prefs.getString(_assessmentConversionsKey);
-    if (conversionData != null && conversionData.isNotEmpty) {
-      try {
-        final conversions =
-            Map<String, dynamic>.from(jsonDecode(conversionData) as Map);
-        conversions.remove(id.toString());
-        await prefs.setString(
-            _assessmentConversionsKey, jsonEncode(conversions));
-      } catch (_) {
-        // Ignore malformed legacy conversion data.
-      }
-    }
-
     return 1;
   }
 
@@ -934,42 +920,12 @@ class DatabaseHelper {
   Future<int> saveMarksBulk(
       int assessmentId, List<Map<String, dynamic>> entries) async {
     final prefs = await SharedPreferences.getInstance();
-
-    // Validate against the assessment's Out Of value at the data layer too.
-    // The UI performs the same validation, but keeping this check here prevents
-    // invalid marks from being stored by any other caller.
-    final assessmentData = prefs.getString(_assessmentsKey);
-    if (assessmentData == null || assessmentData.isEmpty) return 0;
-
-    final assessmentItems = (jsonDecode(assessmentData) as List)
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-    final assessmentIndex =
-        assessmentItems.indexWhere((e) => e['id'] == assessmentId);
-    if (assessmentIndex == -1) return 0;
-
-    final outOf = (assessmentItems[assessmentIndex]['out_of'] as num?)?.toDouble();
-    if (outOf == null || outOf <= 0) return 0;
-
     final data = prefs.getString(_marksKey);
     final marks = data == null || data.isEmpty
         ? <Map<String, dynamic>>[]
         : (jsonDecode(data) as List)
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
-
-    // Validate the complete batch before modifying any existing record.
-    for (final entry in entries) {
-      final studentId = entry['student_id'];
-      final status = entry['status'] == 'Absent' ? 'Absent' : 'Present';
-      final value = status == 'Absent'
-          ? 0.0
-          : (entry['marks'] as num?)?.toDouble();
-
-      if (studentId == null || value == null || value < 0 || value > outOf) {
-        return 0;
-      }
-    }
 
     for (final entry in entries) {
       final studentId = entry['student_id'];
@@ -1066,6 +1022,196 @@ class DatabaseHelper {
   // CLEAR DATA
   // ============================================================
 
+
+  // ============================================================
+  // BACKUP / RESTORE
+  // ============================================================
+
+  Future<Map<String, dynamic>> exportAllData() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      'version': 2,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'courses': jsonDecode(prefs.getString(_coursesKey) ?? '[]'),
+      'students': jsonDecode(prefs.getString(_studentsKey) ?? '[]'),
+      'attendance': jsonDecode(prefs.getString(_attendanceKey) ?? '[]'),
+      'assessments': jsonDecode(prefs.getString(_assessmentsKey) ?? '[]'),
+      'marks': jsonDecode(prefs.getString(_marksKey) ?? '[]'),
+      'assessment_conversions': jsonDecode(
+        prefs.getString(_assessmentConversionsKey) ?? '{}',
+      ),
+    };
+  }
+
+  Future<Map<String, int>> restoreAllData(Map<String, dynamic> backup) async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentCourses = await getCourses();
+    final currentStudents = await _getRawStudents();
+    final currentAttendance = await _getRawAttendance();
+    final currentAssessments = await _getRawAssessments();
+    final currentMarks = await _getRawMarks();
+
+    final addedCourses = <Map<String, dynamic>>[];
+    final courseIdMap = <int, int>{};
+
+    final backupCourses = (backup['courses'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    for (final raw in backupCourses) {
+      final code = raw['code']?.toString().trim().toLowerCase() ?? '';
+      final name = raw['name']?.toString().trim().toLowerCase() ?? '';
+      final semester = raw['semester']?.toString().trim().toLowerCase() ?? '';
+      final section = raw['section']?.toString().trim().toLowerCase() ?? '';
+      final existing = currentCourses.where((c) =>
+          c.code.trim().toLowerCase() == code &&
+          c.name.trim().toLowerCase() == name &&
+          c.semester.trim().toLowerCase() == semester &&
+          c.section.trim().toLowerCase() == section).toList();
+      final oldId = raw['id'];
+      if (oldId is! int) continue;
+      if (existing.isNotEmpty && existing.first.id != null) {
+        courseIdMap[oldId] = existing.first.id!;
+      } else {
+        final newId = currentCourses.isEmpty
+            ? 1
+            : currentCourses.map((c) => c.id ?? 0).fold<int>(0, (a, b) => a > b ? a : b) +
+                addedCourses.length + 1;
+        raw['id'] = newId;
+        addedCourses.add(raw);
+        courseIdMap[oldId] = newId;
+      }
+    }
+    final mergedCourses = [
+      ...currentCourses.map((c) => c.toMap()),
+      ...addedCourses,
+    ];
+    await prefs.setString(_coursesKey, jsonEncode(mergedCourses));
+
+    final studentIdMap = <int, int>{};
+    var nextStudentId = currentStudents.map((e) => e['id']).whereType<int>().fold<int>(0, (a,b)=>a>b?a:b) + 1;
+    var addedStudents = 0;
+    for (final raw0 in (backup['students'] as List? ?? [])) {
+      final raw = Map<String, dynamic>.from(raw0 as Map);
+      final oldCourse = raw['course_id'];
+      if (oldCourse is! int || !courseIdMap.containsKey(oldCourse)) continue;
+      final newCourse = courseIdMap[oldCourse]!;
+      final sid = raw['student_id']?.toString().trim().toLowerCase() ?? '';
+      final existing = currentStudents.where((e) =>
+          e['course_id'] == newCourse &&
+          e['student_id']?.toString().trim().toLowerCase() == sid).toList();
+      final oldId = raw['id'];
+      if (oldId is! int) continue;
+      if (existing.isNotEmpty) {
+        studentIdMap[oldId] = existing.first['id'] as int;
+      } else {
+        raw['id'] = nextStudentId++;
+        raw['course_id'] = newCourse;
+        currentStudents.add(raw);
+        studentIdMap[oldId] = raw['id'] as int;
+        addedStudents++;
+      }
+    }
+    await _saveRawStudents(currentStudents);
+
+    var addedAttendance = 0;
+    for (final raw0 in (backup['attendance'] as List? ?? [])) {
+      final raw = Map<String, dynamic>.from(raw0 as Map);
+      final oc = raw['course_id'];
+      final os = raw['student_id'];
+      if (oc is! int || os is! int || !courseIdMap.containsKey(oc) || !studentIdMap.containsKey(os)) continue;
+      raw['course_id'] = courseIdMap[oc];
+      raw['student_id'] = studentIdMap[os];
+      final duplicate = currentAttendance.any((e) =>
+          e['course_id'] == raw['course_id'] &&
+          e['student_id'] == raw['student_id'] &&
+          e['date']?.toString() == raw['date']?.toString());
+      if (!duplicate) {
+        final maxId = currentAttendance.map((e) => e['id']).whereType<int>().fold<int>(0,(a,b)=>a>b?a:b);
+        raw['id'] = maxId + 1;
+        currentAttendance.add(raw);
+        addedAttendance++;
+      }
+    }
+    await _saveRawAttendance(currentAttendance);
+
+    final assessmentIdMap = <int, int>{};
+    var nextAssessmentId = currentAssessments.map((e) => e['id']).whereType<int>().fold<int>(0,(a,b)=>a>b?a:b)+1;
+    var addedAssessments = 0;
+    for (final raw0 in (backup['assessments'] as List? ?? [])) {
+      final raw = Map<String, dynamic>.from(raw0 as Map);
+      final oc = raw['course_id'];
+      final oldId = raw['id'];
+      if (oc is! int || oldId is! int || !courseIdMap.containsKey(oc)) continue;
+      final newCourse = courseIdMap[oc]!;
+      final name = raw['name']?.toString().trim().toLowerCase() ?? '';
+      final existing = currentAssessments.where((e) =>
+          e['course_id'] == newCourse && e['name']?.toString().trim().toLowerCase() == name).toList();
+      if (existing.isNotEmpty) {
+        assessmentIdMap[oldId] = existing.first['id'] as int;
+      } else {
+        raw['id'] = nextAssessmentId++;
+        raw['course_id'] = newCourse;
+        currentAssessments.add(raw);
+        assessmentIdMap[oldId] = raw['id'] as int;
+        addedAssessments++;
+      }
+    }
+    await prefs.setString(_assessmentsKey, jsonEncode(currentAssessments));
+
+    var addedMarks = 0;
+    for (final raw0 in (backup['marks'] as List? ?? [])) {
+      final raw = Map<String, dynamic>.from(raw0 as Map);
+      final oa = raw['assessment_id'];
+      final os = raw['student_id'];
+      if (oa is! int || os is! int || !assessmentIdMap.containsKey(oa) || !studentIdMap.containsKey(os)) continue;
+      raw['assessment_id'] = assessmentIdMap[oa];
+      raw['student_id'] = studentIdMap[os];
+      final duplicate = currentMarks.any((e) => e['assessment_id'] == raw['assessment_id'] && e['student_id'] == raw['student_id']);
+      if (!duplicate) {
+        final maxId = currentMarks.map((e)=>e['id']).whereType<int>().fold<int>(0,(a,b)=>a>b?a:b);
+        raw['id'] = maxId + 1;
+        currentMarks.add(raw);
+        addedMarks++;
+      }
+    }
+    await prefs.setString(_marksKey, jsonEncode(currentMarks));
+
+    final conversions = Map<String, dynamic>.from(
+      jsonDecode(prefs.getString(_assessmentConversionsKey) ?? '{}') as Map,
+    );
+    final backupConversions = Map<String, dynamic>.from(
+      backup['assessment_conversions'] is Map ? backup['assessment_conversions'] as Map : {},
+    );
+    for (final entry in backupConversions.entries) {
+      final oldCourse = int.tryParse(entry.key);
+      if (oldCourse == null || !courseIdMap.containsKey(oldCourse)) continue;
+      conversions[courseIdMap[oldCourse]!.toString()] = entry.value;
+    }
+    await prefs.setString(_assessmentConversionsKey, jsonEncode(conversions));
+
+    return {
+      'courses': addedCourses.length,
+      'students': addedStudents,
+      'attendance': addedAttendance,
+      'assessments': addedAssessments,
+      'marks': addedMarks,
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> _getRawAssessments() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString(_assessmentsKey);
+    if (data == null || data.isEmpty) return [];
+    return (jsonDecode(data) as List).map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> _getRawMarks() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString(_marksKey);
+    if (data == null || data.isEmpty) return [];
+    return (jsonDecode(data) as List).map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
   Future<void> clearAllData() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -1074,7 +1220,6 @@ class DatabaseHelper {
     await prefs.remove(_attendanceKey);
     await prefs.remove(_assessmentsKey);
     await prefs.remove(_marksKey);
-    await prefs.remove(_assessmentConversionsKey);
   }
 
   Future<void> clearStudents() async {

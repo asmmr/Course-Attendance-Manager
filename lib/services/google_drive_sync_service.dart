@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../database/database_helper.dart';
 
 /// Google Drive backup service for Course Attendance Manager.
 ///
@@ -27,14 +30,24 @@ class GoogleDriveSyncService {
   String? _accessToken;
   String? _rootFolderId;
 
+  Timer? _autoSyncTimer;
+  bool _autoSyncEnabled = true;
+  bool _autoSyncRunning = false;
+
   bool get isConnected => _account != null && _accessToken != null;
   String? get accountEmail => _account?.email;
+  bool get isAutoSyncEnabled => _autoSyncEnabled;
+
+  static const Duration _autoSyncInterval = Duration(minutes: 2);
 
   Future<void> initialize() async {
     if (_initialized) return;
 
     await _googleSignIn.initialize(serverClientId: _webClientId);
     _initialized = true;
+
+    final prefs = await SharedPreferences.getInstance();
+    _autoSyncEnabled = prefs.getBool('drive_auto_sync_enabled') ?? true;
 
     // Restore a lightweight session if the plugin already has one.
     try {
@@ -47,6 +60,8 @@ class GoogleDriveSyncService {
       // A previous session is optional. The explicit Connect button will
       // perform authentication when needed.
     }
+
+    _startAutoSyncTimer();
   }
 
   Future<GoogleSignInAccount> connect() async {
@@ -70,6 +85,7 @@ class GoogleDriveSyncService {
     _accessToken = null;
     _account = null;
     _rootFolderId = null;
+    _stopAutoSyncTimer();
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('drive_sync_enabled', false);
@@ -395,6 +411,122 @@ class GoogleDriveSyncService {
     }
 
     return result;
+  }
+
+
+  Future<String> ensureAttendanceFolder() async {
+    await initialize();
+    if (!isConnected) {
+      throw StateError('Google Drive is not connected.');
+    }
+    _rootFolderId ??= await _getOrCreateFolder('Attendance');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('drive_root_folder_id', _rootFolderId!);
+    return _rootFolderId!;
+  }
+
+
+  /// Enables or disables automatic Google Drive synchronization.
+  ///
+  /// Auto Sync runs while the app is open. It checks for local data changes
+  /// every two minutes and uploads a full backup only when the data changed.
+  /// Local data remains available even when Auto Sync is disabled or offline.
+  Future<void> setAutoSyncEnabled(bool enabled) async {
+    _autoSyncEnabled = enabled;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('drive_auto_sync_enabled', enabled);
+
+    if (enabled) {
+      _startAutoSyncTimer();
+      // Run one immediate check after enabling.
+      unawaited(autoSyncNow());
+    } else {
+      _stopAutoSyncTimer();
+    }
+  }
+
+  void _startAutoSyncTimer() {
+    _autoSyncTimer?.cancel();
+    if (!_autoSyncEnabled) return;
+
+    _autoSyncTimer = Timer.periodic(_autoSyncInterval, (_) {
+      unawaited(autoSyncNow());
+    });
+  }
+
+  void _stopAutoSyncTimer() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = null;
+  }
+
+  /// Checks whether local data changed since the last successful sync.
+  Future<bool> autoSyncNow() async {
+    if (!_autoSyncEnabled || !isConnected || _autoSyncRunning) return false;
+
+    _autoSyncRunning = true;
+    try {
+      final data = await DatabaseHelper.instance.exportAllData();
+      final payload = const JsonEncoder().convert(data);
+      final signature = _simpleHash(payload);
+
+      final prefs = await SharedPreferences.getInstance();
+      final previousSignature =
+          prefs.getString('drive_last_synced_signature');
+
+      if (previousSignature == signature) {
+        return false;
+      }
+
+      await syncFullBackup(data);
+
+      await prefs.setString('drive_last_synced_signature', signature);
+      return true;
+    } catch (_) {
+      // Auto Sync must never interrupt or block local attendance/marks work.
+      return false;
+    } finally {
+      _autoSyncRunning = false;
+    }
+  }
+
+  /// Stores a compact deterministic signature without adding another package.
+  String _simpleHash(String value) {
+    var hash = 0x811c9dc5;
+    for (final unit in value.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  Future<void> syncFullBackup(Map<String, dynamic> data) async {
+    if (!isConnected) return;
+    final folderId = await ensureAttendanceFolder();
+    await _uploadJsonFile(
+      fileName: 'CourseAttendance_Full_Backup.json',
+      parentId: folderId,
+      data: data,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'drive_last_backup_at',
+      DateTime.now().toUtc().toIso8601String(),
+    );
+
+    // Manual backup is also considered the latest synchronized state.
+    try {
+      final signature = _simpleHash(const JsonEncoder().convert(data));
+      await prefs.setString('drive_last_synced_signature', signature);
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>?> downloadFullBackup() async {
+    if (!isConnected) return null;
+    final folderId = await ensureAttendanceFolder();
+    final file = await _findFile('CourseAttendance_Full_Backup.json', folderId);
+    if (file == null) return null;
+    return _downloadJsonFile(file['id'].toString());
   }
 
   Future<void> setRootFolderId(String? id) async {
