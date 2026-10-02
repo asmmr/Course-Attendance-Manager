@@ -20,9 +20,11 @@ import 'services/google_drive_sync_service.dart';
 import 'database/database_helper.dart';
 import 'models/course.dart';
 
-void main() {
-  //WidgetsFlutterBinding.ensureInitialized();
-
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Initialize Drive sync once at app startup so Auto Sync and the Settings
+  // state are available regardless of whether the user opens Settings first.
+  await GoogleDriveSyncService.instance.initialize();
   runApp(const CourseAttendanceManager());
 }
 
@@ -135,9 +137,7 @@ class _MainScreenState extends State<MainScreen> {
           backgroundColor: Colors.transparent,
           selectedIndex: currentIndex,
           onDestinationSelected: (index) {
-            setState(() {
-              currentIndex = index;
-            });
+            goTo(index);
           },
           destinations: const [
             NavigationDestination(
@@ -6469,7 +6469,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   style: const TextStyle(fontSize: 10, color: Color(0xff64748B)),
                 ),
                 value: autoSyncEnabled,
-                onChanged: connected && !backingUp && !restoring
+                onChanged: !backingUp && !restoring
                     ? _setAutoSync
                     : null,
               ),
