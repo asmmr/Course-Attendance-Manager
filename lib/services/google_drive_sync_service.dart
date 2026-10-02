@@ -19,6 +19,12 @@ class GoogleDriveSyncService {
   static const String _webClientId =
       '472946327335-fpkl0k08oj8i70a9nhg4usfk2couffro.apps.googleusercontent.com';
 
+  // The iOS OAuth client ID belongs to the app (not to an individual user).
+  // It is supplied at build time so the same app can be used by many users,
+  // each connecting their own Google account/Drive.
+  static const String _iosClientId =
+      String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
+
   static const String driveScope = 'https://www.googleapis.com/auth/drive.file';
   static const String _driveApi = 'https://www.googleapis.com/drive/v3';
   static const String _uploadApi = 'https://www.googleapis.com/upload/drive/v3/files';
@@ -43,7 +49,10 @@ class GoogleDriveSyncService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    await _googleSignIn.initialize(serverClientId: _webClientId);
+    await _googleSignIn.initialize(
+      clientId: _iosClientId.isEmpty ? null : _iosClientId,
+      serverClientId: _webClientId,
+    );
     _initialized = true;
 
     final prefs = await SharedPreferences.getInstance();
@@ -152,6 +161,20 @@ class GoogleDriveSyncService {
     return headers;
   }
 
+  Future<Map<String, String>?> _silentHeaders() async {
+    if (_account == null) return null;
+    final headers = await _account!.authorizationClient.authorizationHeaders(
+      [driveScope],
+      promptIfNecessary: false,
+    );
+    if (headers == null || headers['Authorization'] == null) return null;
+    final auth = headers['Authorization'];
+    if (auth != null && auth.startsWith('Bearer ')) {
+      _accessToken = auth.substring(7);
+    }
+    return headers;
+  }
+
   Future<http.Response> _request(
     Future<http.Response> Function(Map<String, String> headers) request,
   ) async {
@@ -162,6 +185,14 @@ class GoogleDriveSyncService {
       await _refreshAccessToken(promptIfNecessary: true);
       return await request(await _headers());
     }
+  }
+
+  Future<http.Response?> _silentRequest(
+    Future<http.Response> Function(Map<String, String> headers) request,
+  ) async {
+    final headers = await _silentHeaders();
+    if (headers == null) return null;
+    return request(headers);
   }
 
   Future<String> _getOrCreateFolder(String name, {String? parentId}) async {
@@ -466,6 +497,11 @@ class GoogleDriveSyncService {
 
     _autoSyncRunning = true;
     try {
+      // Never trigger an interactive Google authorization dialog from the
+      // automatic timer. Manual Sync/Connect may request authorization.
+      final silentHeaders = await _silentHeaders();
+      if (silentHeaders == null) return false;
+
       final data = await DatabaseHelper.instance.exportAllData();
       final payload = const JsonEncoder().convert(data);
       final signature = _simpleHash(payload);
