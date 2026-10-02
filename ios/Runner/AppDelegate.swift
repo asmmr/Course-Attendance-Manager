@@ -1,5 +1,5 @@
-import GoogleSignIn
 import Flutter
+import GoogleSignIn
 import UIKit
 
 @main
@@ -11,13 +11,6 @@ import UIKit
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-  }
-}
-
-
-extension AppDelegate {
   override func application(
     _ app: UIApplication,
     open url: URL,
@@ -27,5 +20,9 @@ extension AppDelegate {
       return true
     }
     return super.application(app, open: url, options: options)
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
   }
 }

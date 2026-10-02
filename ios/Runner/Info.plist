@@ -2,9 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>GIDServerClientID</key>
-    <string>472946327335-fpkl0k08oj8i70a9nhg4usfk2couffro.apps.googleusercontent.com</string>
-
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
 
@@ -34,6 +31,26 @@
 
     <key>CFBundleVersion</key>
     <string>$(FLUTTER_BUILD_NUMBER)</string>
+
+
+    <!-- Google Sign-In configuration -->
+    <key>GIDClientID</key>
+    <string>472946327335-4b59vek4hbu52u33agabj2kdkjq0k3qv.apps.googleusercontent.com</string>
+
+    <key>GIDServerClientID</key>
+    <string>472946327335-fpkl0k08oj8i70a9nhg4usfk2couffro.apps.googleusercontent.com</string>
+
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>com.googleusercontent.apps.472946327335-4b59vek4hbu52u33agabj2kdkjq0k3qv</string>
+            </array>
+        </dict>
+    </array>
 
     <key>LSRequiresIPhoneOS</key>
     <true/>
